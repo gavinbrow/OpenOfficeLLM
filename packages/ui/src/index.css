@@ -1,0 +1,218 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Light palette. Channel triples (not hex) so Tailwind's `/opacity`
+     modifiers keep working: `bg-ok/15` compiles to rgb(var(--ok) / 0.15). */
+  :root {
+    color-scheme: light;
+
+    --surface: 255 255 255;
+    --surface-raised: 255 255 255;
+    --surface-muted: 243 243 243;
+    --surface-hover: 235 235 235;
+    --surface-border: 224 224 224;
+    --surface-inverse: 27 27 27;
+
+    --fg: 27 27 27;
+    --fg-inverse: 255 255 255;
+    --fg-muted: 92 92 92;
+    --fg-faint: 125 125 125;
+
+    --accent: 15 108 189;
+    --accent-hover: 11 90 158;
+    --accent-fg: 11 90 158;
+    --accent-soft: rgba(15, 108, 189, 0.1);
+    --accent-line: rgba(15, 108, 189, 0.45);
+
+    --ok: 16 124 16;
+    --warn: 154 100 0;
+    --danger: 197 15 31;
+  }
+
+  /* Dark palette. Same tokens, swapped values — no component needs a `dark:`
+     variant to stay legible. Foreground values are picked for >= 7:1 against
+     `--surface`; the previous #616161 muted text sat at 2.4:1 and was
+     effectively invisible in the task pane. */
+  .dark {
+    color-scheme: dark;
+
+    --surface: 30 30 30;
+    --surface-raised: 40 40 40;
+    --surface-muted: 46 46 46;
+    --surface-hover: 61 61 61;
+    --surface-border: 64 64 64;
+    --surface-inverse: 240 240 240;
+
+    --fg: 240 240 240;
+    --fg-inverse: 27 27 27;
+    --fg-muted: 172 172 172;
+    --fg-faint: 141 141 141;
+
+    --accent: 17 94 163;
+    --accent-hover: 15 108 189;
+    --accent-fg: 113 180 247;
+    --accent-soft: rgba(71, 158, 245, 0.16);
+    --accent-line: rgba(113, 180, 247, 0.5);
+
+    --ok: 84 176 84;
+    --warn: 236 193 72;
+    --danger: 241 112 123;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    /* The task pane is a fixed viewport with its own internal scrollers. Left
+       scrollable, the document itself scrolls whenever the stack below the
+       transcript grows (staged edits, usage, skills), dragging the composer up
+       and leaving dead space beneath it. */
+    overflow: hidden;
+  }
+  body {
+    margin: 0;
+    @apply bg-surface text-fg font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-border;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-faint;
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 select-none whitespace-nowrap rounded-lg
+      transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+      disabled:opacity-45 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply bg-transparent text-muted hover:bg-surface-hover hover:text-fg;
+  }
+  .btn-primary {
+    @apply bg-accent text-white hover:bg-accent-hover;
+  }
+  .btn-subtle {
+    @apply bg-surface-muted text-fg border border-surface-border hover:bg-surface-hover;
+  }
+  .btn-danger {
+    @apply bg-transparent text-danger border border-danger/40 hover:bg-danger/10;
+  }
+  .icon-btn {
+    @apply inline-flex items-center justify-center rounded-lg transition-colors
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-surface-muted px-2.5 py-1 text-xs
+      border border-surface-border text-fg;
+  }
+  /* Modal and popover surfaces. The background MUST be opaque: `.panel` floats
+     over the chat, and a translucent one let the message list show through the
+     settings text. */
+  .panel {
+    @apply bg-surface-raised border border-surface-border rounded-xl2 shadow-pop text-fg;
+  }
+  /* Pop-up menus anchored to a trigger. `useAnchoredMenu` measures the trigger
+     and writes left/top/width/max-height onto the node, so the only things set
+     here are the ones that must hold before the first measurement: fixed, so no
+     `overflow` ancestor can clip the menu, and hidden, so it is never painted
+     at the unplaced origin. The hook reveals it. */
+  .menu-floating {
+    position: fixed;
+    visibility: hidden;
+  }
+  /* Form controls.
+     `py-1.5` rather than `py-2`: several call sites pin the height with `h-8`
+     (32px), and 8px of padding top and bottom plus a ~18px line box overflows
+     that by 4px — which rendered as select labels and numbers clipped through
+     the bottom border of their own box. 6 + 18 + 6 + 2px border = 32 exactly. */
+  .field {
+    @apply w-full rounded-lg bg-surface-muted border border-surface-border px-3 py-1.5 text-sm
+      leading-[1.125rem] text-fg placeholder:text-faint
+      focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent;
+  }
+  /* Native selects and their popups render with the OS theme inside the task
+     pane, which in dark mode produced white text on a white dropdown. Force
+     explicit colours on both the closed control and the option list, and
+     replace the OS chevron so the pane owns the styling. */
+  select.field,
+  select.select-bare {
+    @apply appearance-none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237d7d7d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.4rem center;
+    padding-right: 1.65rem;
+  }
+  /* A select that sits inline in a bar rather than in a form: no filled
+     background, but the same forced option colours. */
+  .select-bare {
+    @apply rounded border border-surface-border bg-transparent px-1.5 py-0.5 text-xs text-fg
+      hover:bg-surface-hover focus:outline-none focus:ring-1 focus:ring-accent;
+  }
+  select.field option,
+  select.select-bare option {
+    background-color: rgb(var(--surface-raised));
+    color: rgb(var(--fg));
+  }
+}
+
+/* highlight.js theme — minimal, theme-aware */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  @apply bg-surface-muted text-fg;
+  font-family: theme('fontFamily.mono');
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.hljs-keyword,
+.hljs-built_in,
+.hljs-type {
+  @apply text-accent-fg;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-meta-string {
+  @apply text-ok;
+}
+.hljs-number,
+.hljs-literal {
+  @apply text-warn;
+}
+.hljs-comment,
+.hljs-quote {
+  @apply text-faint italic;
+}
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title {
+  @apply text-accent-fg;
+}
+.hljs-tag,
+.hljs-name {
+  @apply text-danger;
+}
+.hljs-attribute {
+  @apply text-warn;
+}

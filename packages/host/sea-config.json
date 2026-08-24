@@ -1,0 +1,6 @@
+{
+  "main": "dist/index.cjs",
+  "output": "sea-prep.blob",
+  "useCodeCache": true,
+  "disableExperimentalSeaWarningType": "compatibility"
+}

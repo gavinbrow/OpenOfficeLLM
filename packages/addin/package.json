@@ -1,0 +1,38 @@
+{
+  "name": "@openofficellm/addin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "React task pane for OpenOfficeLLM \u2014 chat surface for Word and Excel, served by the local host service.",
+  "scripts": {
+    "dev": "vite",
+    "gen:icons": "node ../../scripts/gen-icons.mjs --out public --sizes 16,32,64,80",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --port 4173",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@openofficellm/shared": "^0.1.0",
+    "@openofficellm/ui": "^0.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.1",
+    "@types/office-js": "^1.0.605",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "highlight.js": "^11.11.1",
+    "jsdom": "^26.0.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
+  }
+}

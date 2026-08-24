@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenOfficeLLM Commands</title>
+    <!-- The host rewrites this tag to /office/office.js when the CDN was
+         unreachable at startup; see static.ts. -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  </head>
+  <body>
+    <!--
+      VersionOverrides requires a FunctionFile on DesktopFormFactor even when
+      every Control uses ShowTaskpane rather than ExecuteFunction. Office loads
+      this page into a hidden frame at ribbon-build time, so it must exist and
+      return 200 — but it has nothing to do.
+    -->
+  </body>
+</html>

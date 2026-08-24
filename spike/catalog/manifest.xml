@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Phase 0 spike manifest.
+
+  SourceLocation is the whole point — the pane is served from the loopback
+  origin, which is what puts it in the same address space as Ollama.
+
+  VersionOverrides is here for a practical reason as well as to de-risk P6.2:
+  a registered developer add-in with a PrimaryCommandSurface extension point
+  gets its ribbon button as soon as the host app starts, so opening the pane is
+  one click on the Home tab rather than a dig through
+  Add-ins > More Add-ins > Developer Add-ins.
+-->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+
+  <Id>7e3d0a41-5c92-4b8e-9f16-2a4c8d1b6e30</Id>
+  <!-- Must be >= 1.0. Office silently declines to surface a manifest whose
+       version is below 1.0 — no error, the add-in simply never appears. -->
+  <Version>1.0.0.0</Version>
+  <ProviderName>OpenOfficeLLM</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="OpenOfficeLLM LNA Spike"/>
+  <Description DefaultValue="Phase 0 spike: verify loopback-to-loopback fetch from an Office task pane."/>
+  <IconUrl DefaultValue="https://127.0.0.1:7317/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://127.0.0.1:7317/icon-80.png"/>
+  <SupportUrl DefaultValue="https://127.0.0.1:7317/taskpane.html"/>
+
+  <AppDomains>
+    <AppDomain>https://127.0.0.1:7317</AppDomain>
+    <AppDomain>https://localhost:7317</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Document"/>
+    <Host Name="Workbook"/>
+  </Hosts>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://127.0.0.1:7317/taskpane.html"/>
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <!-- Word -->
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Taskpane.Url"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="SpikeGroup">
+                <Label resid="SpikeGroup.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16"/>
+                  <bt:Image size="32" resid="Icon.32x32"/>
+                  <bt:Image size="80" resid="Icon.80x80"/>
+                </Icon>
+                <Control xsi:type="Button" id="SpikeTaskpaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>SpikeTaskpane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+
+      <!-- Excel -->
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Taskpane.Url"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="SpikeGroup">
+                <Label resid="SpikeGroup.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16"/>
+                  <bt:Image size="32" resid="Icon.32x32"/>
+                  <bt:Image size="80" resid="Icon.80x80"/>
+                </Icon>
+                <Control xsi:type="Button" id="SpikeTaskpaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>SpikeTaskpane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16x16" DefaultValue="https://127.0.0.1:7317/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://127.0.0.1:7317/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://127.0.0.1:7317/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://127.0.0.1:7317/taskpane.html"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://127.0.0.1:7317/commands.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="SpikeGroup.Label" DefaultValue="OpenOfficeLLM"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="LNA Spike"/>
+        <bt:String id="GetStarted.Title" DefaultValue="OpenOfficeLLM LNA Spike"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open the Phase 0 Local Network Access spike pane."/>
+        <bt:String id="GetStarted.Description" DefaultValue="Open the pane from the Home tab to run the loopback fetch test."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

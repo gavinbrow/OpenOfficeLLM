@@ -1,0 +1,13 @@
+# Normalize line endings: the repo stores LF, checkouts use the platform
+# default. Prettier enforces `endOfLine: lf` so this matches what the tools
+# already expect.
+* text=auto
+
+# Binary files — never normalize, never diff as text.
+*.png binary
+*.ico binary
+*.docx binary
+*.pem binary
+*.pfx binary
+*.key binary
+*.crt binary

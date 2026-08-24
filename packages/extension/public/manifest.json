@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "OpenOfficeLLM",
+  "version": "0.1.0",
+  "description": "Your local AI assistant, reading the page you are on. Same models and providers as the Word and Excel add-in.",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "scripting", "tabs", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": ["https://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "OpenOfficeLLM",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "openofficellm",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Claude-style AI assistant for Microsoft Word and Excel on Windows desktop and for Chrome, with first-class local model support.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:host": "npm --workspace @openofficellm/host run dev",
+    "dev:addin": "npm --workspace @openofficellm/addin run dev",
+    "start": "node packages/host/dist/index.cjs",
+    "setup": "npm run build && node packages/host/dist/index.js --install",
+    "diagnose": "node packages/host/dist/index.js --diagnose",
+    "uninstall": "node packages/host/dist/index.js --uninstall",
+    "build": "npm run build:shared && npm run build:addin && npm run build:host",
+    "build:shared": "npm --workspace @openofficellm/shared run build",
+    "build:addin": "npm --workspace @openofficellm/addin run build",
+    "build:host": "npm --workspace @openofficellm/host run build",
+    "typecheck": "npm --workspaces --if-present run typecheck",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:ui": "npm --workspace @openofficellm/ui run typecheck",
+    "build:extension": "npm --workspace @openofficellm/extension run build",
+    "build:all": "npm run build && npm run build:extension",
+    "build:installer": "node scripts/build-installer.mjs",
+    "dev:extension": "npm --workspace @openofficellm/extension run dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.16.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
+    "postject": "^1.0.0-alpha.6",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=11.0.0"
+  }
+}

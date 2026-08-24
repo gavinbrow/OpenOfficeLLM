@@ -1,0 +1,32 @@
+{
+  "name": "@openofficellm/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome side-panel extension for OpenOfficeLLM \u2014 the same assistant, reading the active tab instead of a document.",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc --noEmit && vite build && vite build -c vite.content.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "gen:icons": "node ../../scripts/gen-icons.mjs --out public/icons --sizes 16,32,48,128"
+  },
+  "dependencies": {
+    "@openofficellm/shared": "^0.1.0",
+    "@openofficellm/ui": "^0.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
+  }
+}

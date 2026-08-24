@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LNA Spike</title>
+    <script
+      src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"
+      onerror="window.__officeJsFailed = true"
+    ></script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fff;
+        --fg: #1b1b1b;
+        --muted: #616161;
+        --line: #e1e1e1;
+        --card: #faf9f8;
+        --pass: #0f7b0f;
+        --fail: #c42b1c;
+        --warn: #9d5d00;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1f1f1f;
+          --fg: #f3f2f1;
+          --muted: #a19f9d;
+          --line: #3d3d3d;
+          --card: #2b2b2b;
+          --pass: #6ccb5f;
+          --fail: #ff99a4;
+          --warn: #fce100;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          13px/1.45 'Segoe UI Variable Text',
+          'Segoe UI',
+          system-ui,
+          sans-serif;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 10px;
+      }
+      #verdict {
+        padding: 10px 12px;
+        border-radius: 6px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        border: 1px solid var(--line);
+        background: var(--card);
+      }
+      #verdict.pass {
+        color: var(--pass);
+        border-color: currentColor;
+      }
+      #verdict.fail {
+        color: var(--fail);
+        border-color: currentColor;
+      }
+      .test {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        background: var(--card);
+      }
+      .test .name {
+        font-weight: 600;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .badge {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      .badge.pass {
+        color: var(--pass);
+      }
+      .badge.fail {
+        color: var(--fail);
+      }
+      .badge.warn {
+        color: var(--warn);
+      }
+      .badge.run {
+        color: var(--muted);
+      }
+      pre {
+        margin: 6px 0 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font:
+          11px/1.4 'Cascadia Mono',
+          Consolas,
+          monospace;
+        color: var(--muted);
+      }
+      button {
+        font: inherit;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        cursor: pointer;
+      }
+      h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        margin: 16px 0 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Local Network Access spike</h1>
+    <div id="verdict">running…</div>
+    <div id="tests"></div>
+    <h2>Environment</h2>
+    <div class="test"><pre id="env">collecting…</pre></div>
+    <button id="rerun">Re-run</button>
+
+    <script>
+      const OLLAMA = 'http://127.0.0.1:11434/api/tags'
+      const testsEl = document.getElementById('tests')
+      const verdictEl = document.getElementById('verdict')
+      const envEl = document.getElementById('env')
+      const results = []
+
+      function card(name) {
+        const el = document.createElement('div')
+        el.className = 'test'
+        el.innerHTML =
+          '<div class="name"><span></span><span class="badge run">RUNNING</span></div><pre></pre>'
+        el.querySelector('.name span').textContent = name
+        testsEl.appendChild(el)
+        return {
+          done(status, detail) {
+            const b = el.querySelector('.badge')
+            b.className = 'badge ' + status
+            b.textContent = status.toUpperCase()
+            el.querySelector('pre').textContent = detail
+            results.push({ name, status, detail })
+          },
+        }
+      }
+
+      // A blocked request and a connection-refused request both surface as a
+      // bare TypeError, so the message text is the only in-page signal that
+      // separates them. Capture it verbatim.
+      function describeError(e) {
+        return [
+          'name: ' + e.name,
+          'message: ' + e.message,
+          e.cause ? 'cause: ' + String(e.cause) : null,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      }
+
+      async function testFetch(name, url, init) {
+        const t = card(name)
+        const started = performance.now()
+        try {
+          const r = await fetch(url, init)
+          const body = await r.text()
+          const ms = Math.round(performance.now() - started)
+          t.done(r.ok ? 'pass' : 'fail', `HTTP ${r.status} in ${ms}ms\n${body.slice(0, 400)}`)
+          return r.ok
+        } catch (e) {
+          const ms = Math.round(performance.now() - started)
+          t.done('fail', `threw after ${ms}ms\n${describeError(e)}`)
+          return false
+        }
+      }
+
+      function testPermissionsPolicy() {
+        const t = card('Permissions-Policy: local-network-access')
+        const fp = document.featurePolicy || document.permissionsPolicy
+        if (!fp) {
+          t.done('warn', 'document.featurePolicy is not exposed in this engine')
+          return
+        }
+        const lines = []
+        for (const feature of ['local-network-access', 'private-network-access']) {
+          let allowed
+          try {
+            allowed = fp.allowsFeature(feature)
+          } catch (e) {
+            allowed = 'threw: ' + e.message
+          }
+          lines.push(`${feature}: ${allowed}`)
+        }
+        let known = []
+        try {
+          known = fp.features().filter((f) => /network/i.test(f))
+        } catch {}
+        lines.push('network-ish features known to engine: ' + (known.join(', ') || '(none)'))
+        // Not a gate. If the loopback exemption holds, the pane never needs
+        // this policy — but knowing whether Office grants it tells us whether a
+        // CDN-hosted build could ever work.
+        t.done('warn', lines.join('\n'))
+      }
+
+      async function collectEnv() {
+        const bits = {
+          origin: location.origin,
+          href: location.href,
+          isSecureContext: window.isSecureContext,
+          inIframe: window.top !== window.self,
+          userAgent: navigator.userAgent,
+          brands: (navigator.userAgentData && navigator.userAgentData.brands) || 'n/a',
+          officeJsLoaded: typeof Office !== 'undefined',
+          officeJsFailedToLoad: !!window.__officeJsFailed,
+          time: new Date().toISOString(),
+        }
+        if (typeof Office !== 'undefined' && Office.context) {
+          try {
+            bits.officeHost = Office.context.host
+            bits.officePlatform = Office.context.platform
+            bits.officeDiagnostics = Office.context.diagnostics
+            bits.officeRequirementSets = ['1.1', '1.2', '1.3', '1.4', '1.5'].filter((v) =>
+              Office.context.requirements.isSetSupported('WordApi', v),
+            )
+          } catch (e) {
+            bits.officeError = String(e)
+          }
+        }
+        envEl.textContent = JSON.stringify(bits, null, 2)
+        return bits
+      }
+
+      async function run() {
+        testsEl.innerHTML = ''
+        results.length = 0
+        verdictEl.className = ''
+        verdictEl.textContent = 'running…'
+
+        const env = await collectEnv()
+
+        // Control: same-origin fetch works at all inside this frame, and the
+        // server (a non-browser client) can reach Ollama. If this passes and
+        // the browser-side call fails, the failure is LNA, not Ollama.
+        await testFetch('CONTROL — same-origin fetch to spike server', '/control/ollama')
+
+        testPermissionsPolicy()
+
+        // The gate.
+        const gate = await testFetch('GATE — fetch http://127.0.0.1:11434/api/tags', OLLAMA)
+
+        await testFetch(
+          'fetch http://localhost:11434/api/tags (hostname form)',
+          'http://localhost:11434/api/tags',
+        )
+
+        await testFetch('fetch with targetAddressSpace: "loopback"', OLLAMA, {
+          targetAddressSpace: 'loopback',
+        })
+
+        verdictEl.className = gate ? 'pass' : 'fail'
+        verdictEl.textContent = gate
+          ? 'GATE 0 PASS — loopback→loopback reached Ollama from inside the pane.'
+          : 'GATE 0 FAIL — the pane could not reach Ollama. See the GATE row below.'
+
+        try {
+          await fetch('/report', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ gate, env, results }, null, 2),
+          })
+        } catch {}
+      }
+
+      document.getElementById('rerun').addEventListener('click', run)
+
+      // Run regardless of whether Office.js is present, so the page is also
+      // useful standing alone in a plain browser tab for comparison.
+      if (typeof Office !== 'undefined' && Office.onReady) {
+        Office.onReady(run)
+      } else {
+        window.addEventListener('load', run)
+      }
+    </script>
+  </body>
+</html>

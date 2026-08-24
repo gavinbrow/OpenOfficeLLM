@@ -1,0 +1,55 @@
+# Dependencies
+node_modules
+packages/*/node_modules
+
+# Build output
+dist
+dist-ssr
+packages/*/dist
+packages/*/build
+.vite
+# SEA build artifacts — the compiled host.exe and the intermediate blob.
+packages/host/host.exe
+packages/host/sea-prep.blob
+# Installer staging — assembled by build-installer.mjs, not checked in.
+installer/staging/
+# TypeScript incremental build state. Machine-specific and rewritten by every
+# build, so tracking it means a dirty tree after any `npm run build`.
+*.tsbuildinfo
+
+# Secrets and certs — never commit
+*.pem
+*.pfx
+*.key
+*.crt
+secrets.dat
+packages/host/certs/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+coverage
+
+# Spike runtime artifacts (keep the source, ignore generated)
+spike/office-runtime.log
+spike/~$*
+spike/certs/
+
+# Personal opencode tooling (plugin installs, local skills, dev config).
+# The project does not depend on any of this; it is the maintainer's setup.
+.opencode/
+opencode.json
+opencode.jsonc
