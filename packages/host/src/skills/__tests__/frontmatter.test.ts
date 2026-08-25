@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import path from 'node:path'
 import { parseFrontmatter } from '../frontmatter.js'
 import { parseSkillFile } from '../loader.js'
 
@@ -52,7 +53,13 @@ describe('parseFrontmatter', () => {
 
 describe('parseSkillFile', () => {
   it('derives id and name from the filename when absent', () => {
-    const skill = parseSkillFile('Do the thing.', 'C:\\skills\\Rewrite Formally.md', 'user')
+    // path.join so the fixture uses the native separator on both platforms —
+    // idFromFilename delegates to path.basename, which is separator-aware.
+    const skill = parseSkillFile(
+      'Do the thing.',
+      path.join('C:', 'skills', 'Rewrite Formally.md'),
+      'user',
+    )
     expect(skill?.id).toBe('rewrite-formally')
     expect(skill?.name).toBe('rewrite-formally')
     expect(skill?.prompt).toBe('Do the thing.')

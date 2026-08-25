@@ -27,6 +27,7 @@
     "build:ui": "npm --workspace @openofficellm/ui run typecheck",
     "build:extension": "npm --workspace @openofficellm/extension run build",
     "build:all": "npm run build && npm run build:extension",
+    "build:dmg": "node scripts/build-dmg.mjs",
     "build:installer": "node scripts/build-installer.mjs",
     "dev:extension": "npm --workspace @openofficellm/extension run dev"
   },

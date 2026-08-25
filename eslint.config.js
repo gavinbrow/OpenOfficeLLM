@@ -15,6 +15,7 @@ export default tseslint.config(
       'coverage/**',
       'spike/**',
       'installer/staging/**',
+      'installer/staging-macos/**',
     ],
   },
   js.configs.recommended,

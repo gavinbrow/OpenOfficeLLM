@@ -10,9 +10,12 @@ packages/*/build
 .vite
 # SEA build artifacts — the compiled host.exe and the intermediate blob.
 packages/host/host.exe
+packages/host/openofficellm-host
 packages/host/sea-prep.blob
 # Installer staging — assembled by build-installer.mjs, not checked in.
 installer/staging/
+# macOS DMG staging — assembled by build-dmg.mjs, not checked in.
+installer/staging-macos/
 # TypeScript incremental build state. Machine-specific and rewritten by every
 # build, so tracking it means a dirty tree after any `npm run build`.
 *.tsbuildinfo

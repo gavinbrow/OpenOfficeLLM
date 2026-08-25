@@ -132,13 +132,12 @@ The extension is inherently cross-platform; the host is what needed work.
   a Touch ID / password prompt, which is correct — you are authorising a
   certificate authority — but means it must be run from a terminal you are
   looking at, never from a background start.
-
-**Still Windows-only:** Office add-in registration (`--install`) writes to
-`HKCU\Software\Microsoft\Office\16.0\WEF\Developer`, and autostart writes to the
-`Run` key. Neither is needed by the extension, which is why the browser side
-works on a Mac today while the Word side does not. Sideloading an Office add-in
-on macOS uses a `wef` folder rather than the registry; that is the piece to
-write when the Office side follows.
+- **Office add-in registration** (`--install`) is now platform-dispatched. On
+  macOS the manifest is copied into each Office app's sideload folder
+  (`~/Library/Containers/com.microsoft.{Word,Excel}/Data/Documents/wef/`),
+  which Office re-reads at launch, and autostart is a per-user LaunchAgent
+  (`~/Library/LaunchAgents/com.openofficellm.host.plist`) instead of the
+  registry `Run` key. Windows keeps `HKCU\...\WEF\Developer` unchanged.
 
 ---
 

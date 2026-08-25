@@ -20,6 +20,8 @@ import { loadConfig, updateSettings } from './config.js'
 import { addPairing, removePairing, extensionOrigin } from './pairing.js'
 import { DEFAULT_PORT } from './paths.js'
 
+const IS_DARWIN = process.platform === 'darwin'
+
 export interface CliOptions {
   port?: number
   config?: string
@@ -147,7 +149,11 @@ async function runCertAction(opts: CliOptions): Promise<number> {
       return 1
     }
     await removeTrustedCa(thumbprint)
-    console.log(`Removed CA with thumbprint ${thumbprint} from CurrentUser\\Root (if present).`)
+    console.log(
+      IS_DARWIN
+        ? `Removed CA with thumbprint ${thumbprint} from the login keychain (if present).`
+        : `Removed CA with thumbprint ${thumbprint} from CurrentUser\\Root (if present).`,
+    )
     return 0
   }
   if (opts.trustCert) {
@@ -157,7 +163,11 @@ async function runCertAction(opts: CliOptions): Promise<number> {
       console.log('CA already trusted — nothing to do.')
     } else {
       console.log(`Trusted CA with thumbprint ${thumbprint}.`)
-      console.log('Windows may have shown a Security Warning dialog — this is expected.')
+      console.log(
+        IS_DARWIN
+          ? 'macOS may have shown a Touch ID / password prompt — this is expected.'
+          : 'Windows may have shown a Security Warning dialog — this is expected.',
+      )
     }
     return 0
   }
@@ -178,9 +188,15 @@ async function runInstall(opts: CliOptions): Promise<number> {
   // only one the user has to react to — get it out of the way before anything
   // else has a chance to fail.
   console.log('[1/4] Trusting the local certificate authority...')
-  console.log('      Windows will show a "Security Warning" dialog asking you to confirm.')
-  console.log('      This is expected: Windows always asks before adding a root certificate,')
-  console.log('      even for a per-user, self-generated one. Choose Yes to continue.')
+  if (IS_DARWIN) {
+    console.log('      macOS will show a Touch ID / password prompt asking you to trust the')
+    console.log('      local certificate authority. If prompted, approve it — the CA is')
+    console.log('      stored in the login keychain.')
+  } else {
+    console.log('      Windows will show a "Security Warning" dialog asking you to confirm.')
+    console.log('      This is expected: Windows always asks before adding a root certificate,')
+    console.log('      even for a per-user, self-generated one. Choose Yes to continue.')
+  }
   const { caPem } = loadCertMaterial()
   const thumbprint = await trustLocalCa(caPem)
   console.log(
@@ -194,8 +210,15 @@ async function runInstall(opts: CliOptions): Promise<number> {
   console.log(`      ${written.path}`)
 
   console.log('[3/4] Registering the add-in with Office...')
+  if (IS_DARWIN) {
+    console.log('      Copying the add-in manifest to the Word and Excel sideload folders...')
+  }
   await registerAddin(written.path)
-  console.log('      Registered under HKCU\\...\\Office\\16.0\\WEF\\Developer.')
+  console.log(
+    IS_DARWIN
+      ? '      Copied to Word and Excel wef folders.'
+      : '      Registered under HKCU\\...\\Office\\16.0\\WEF\\Developer.',
+  )
 
   if (opts.noAutostart) {
     console.log('[4/4] Skipping autostart (--no-autostart).')
@@ -207,6 +230,10 @@ async function runInstall(opts: CliOptions): Promise<number> {
 
   console.log('\nDone. Start the host, then in Word or Excel:')
   printInsertSteps()
+  if (IS_DARWIN) {
+    console.log('\nIf Word or Excel was open during install, restart it — macOS re-reads the')
+    console.log('wef folder when the app launches.')
+  }
   console.log('\nThe host must be running whenever you use the add-in — Office loads the')
   console.log('pane from it. Autostart handles that after the next logon.')
   return 0
@@ -222,6 +249,13 @@ async function runInstall(opts: CliOptions): Promise<number> {
  * as much as in Word.
  */
 function printInsertSteps(): void {
+  if (IS_DARWIN) {
+    console.log('  1. Restart Word or Excel (if it is open)')
+    console.log('  2. Insert tab -> Add-ins (or My Add-ins)')
+    console.log('  3. Under "MY ADD-INS", click OpenOfficeLLM')
+    console.log('\n  The add-in is available in both Word and Excel.')
+    return
+  }
   console.log('  1. Home tab -> Add-ins')
   console.log('  2. Under "Developer Add-ins", click OpenOfficeLLM')
   console.log('  3. The OpenOfficeLLM group and its "AI Assistant" button appear on Home')
@@ -246,11 +280,19 @@ async function runUninstall(): Promise<number> {
     // the same common name.
     const removed = await removeTrustedCa(thumbprint)
     console.log(
-      removed ? `CA ${thumbprint} removed from CurrentUser\\Root.` : 'CA was not trusted.',
+      removed
+        ? IS_DARWIN
+          ? `CA ${thumbprint} removed from the login keychain.`
+          : `CA ${thumbprint} removed from CurrentUser\\Root.`
+        : 'CA was not trusted.',
     )
   }
 
-  console.log('\nConfiguration, secrets, and chat history under %APPDATA%\\OpenOfficeLLM')
+  console.log(
+    IS_DARWIN
+      ? '\nConfiguration, secrets, and chat history under ~/Library/Application Support/OpenOfficeLLM'
+      : '\nConfiguration, secrets, and chat history under %APPDATA%\\OpenOfficeLLM',
+  )
   console.log('were left in place. Delete that folder to remove them.')
   return 0
 }
@@ -292,7 +334,11 @@ async function runDiagnose(opts: CliOptions): Promise<number> {
   if (!health.startsWith('responding')) {
     console.log('\nThe pane cannot load while the host is down — Office serves it from this')
     console.log('service, so Word/Excel will show "Sorry, we can\'t load the add-in".')
-    console.log('Start it with: npm start')
+    console.log(
+      IS_DARWIN
+        ? 'Start it with: npm start (or launch the OpenOfficeLLM app)'
+        : 'Start it with: npm start',
+    )
   } else if (reg.registered) {
     console.log('\nTo open the add-in:')
     printInsertSteps()

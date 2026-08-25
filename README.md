@@ -1,6 +1,6 @@
 # OpenOfficeLLM
 
-A Claude-style AI assistant for Microsoft **Word** and **Excel** on Windows desktop and for **Chrome**, with first-class local model support (Ollama, LM Studio, llama.cpp) alongside every major cloud provider, plus opencode integration.
+A Claude-style AI assistant for Microsoft **Word** and **Excel** on Windows and macOS desktop, and for **Chrome**, with first-class local model support (Ollama, LM Studio, llama.cpp) alongside every major cloud provider, plus opencode integration.
 
 One assistant, three surfaces: the Office task pane edits your document, the Chrome side panel reads the page you are on. Both run the same chat UI against the same local host service, the same providers, and the same keys.
 
@@ -83,7 +83,7 @@ the port it actually bound — see [`packages/host/src/manifest.ts`](packages/ho
 
 ## Getting started
 
-### For end users
+### For end users — Windows
 
 Download `OpenOfficeLLM-Setup-<version>.exe` from the [releases
 page](https://github.com/openofficellm/OpenOfficeLLM/releases) and run it. No
@@ -113,10 +113,46 @@ Then in **Word or Excel** — the steps are identical in both:
 > This is a property of sideloading, not a bug in the add-in — see
 > [`Docs/SPIKE-LNA.md`](Docs/SPIKE-LNA.md) for the evidence.
 
+### For end users — macOS
+
+Download `OpenOfficeLLM-<version>-macOS.dmg` from the [releases
+page](https://github.com/openofficellm/OpenOfficeLLM/releases), open it, and
+drag **OpenOfficeLLM** to your **Applications** folder. No Node, no admin
+rights, no terminal.
+
+> **Gatekeeper:** because the app is ad-hoc signed (not notarized), macOS will
+> say it "cannot be opened because it is from an unidentified developer" on
+> first launch. Right-click (or Control-click) the app and choose **Open**,
+> then **Open** again in the dialog. You only have to do this once. Future
+> versions will be Developer ID-signed and notarized.
+
+The first launch runs the same provisioning as the Windows installer —
+idempotent, so it also serves as the upgrade path:
+
+1. macOS asks for Touch ID or your password to trust the local certificate
+   authority. This is expected: you are authorising a CA for your account. The
+   CA is stored in the login keychain, scoped to SSL.
+2. The add-in manifest is copied to the Word and Excel sideload folders
+   (`~/Library/Containers/com.microsoft.{Word,Excel}/Data/Documents/wef/`).
+3. A launchd LaunchAgent keeps the host running and restarts it at logon.
+
+Then in **Word or Excel** — the steps are identical in both:
+
+1. Restart Word or Excel if it was open (macOS re-reads the sideload folder at
+   launch).
+2. **Insert** tab → **Add-ins** (or **My Add-ins**).
+3. Under **MY ADD-INS**, click **OpenOfficeLLM**.
+
+**Updating:** download the new DMG and replace the app in Applications. The
+next launch re-runs `--install`, which re-copies the manifest and re-trusts
+the CA as needed. Config, secrets, and chat history live at
+`~/Library/Application Support/OpenOfficeLLM` and survive updates.
+
 ### For developers
 
-Requirements: Node 22, npm 11, Windows 11, and Word or Excel from Microsoft 365
-(Office 16.0 with the WebView2 runtime).
+Requirements: Node 22, npm 11, Windows 11 or macOS 12+ (with Word or Excel
+from Microsoft 365). On Windows the runtime is WebView2; on macOS, WKWebView.
+The Windows-specific notes are marked; `npm run setup` works on both platforms.
 
 ```bash
 npm install
@@ -124,7 +160,7 @@ npm run setup
 ```
 
 `npm run setup` builds everything, then provisions the current user — no admin
-rights at any point. It:
+rights at any point. On Windows it:
 
 1. **Trusts the local certificate authority.** Windows shows a _Security
    Warning_ dialog asking you to confirm. This is expected and unavoidable:
@@ -135,28 +171,36 @@ rights at any point. It:
 3. Registers it with Office under `HKCU\…\Office\16.0\WEF\Developer`.
 4. Adds a logon entry so the host service starts with Windows.
 
+On macOS the same four steps use their native mechanisms: the CA goes into the
+login keychain (a Touch ID / password prompt, likewise expected and
+unsuppressable), the manifest is copied to the Word and Excel `wef` sideload
+folders, and autostart is a LaunchAgent under `~/Library/LaunchAgents`.
+
 Then start the service and open Word:
 
 ```bash
 npm start
 ```
 
-Then, in **Word or Excel** — the steps are identical in both:
+Then, in **Word or Excel** — on Windows the steps are identical in both:
 
 1. **Home** tab → **Add-ins**
 2. Under **Developer Add-ins**, click **OpenOfficeLLM**
 3. The **OpenOfficeLLM** ribbon group and its **AI Assistant** button appear on
    the Home tab, and the pane opens
 
-> **You have to do this once per Word/Excel session,** and until you do, there
-> is nothing on the ribbon to find. A manifest registered under `WEF\Developer`
-> is scoped to the developer path — Office records it with `UniqueId: developer`
-> and never writes the `AppStates` entry that store-installed add-ins get, which
-> is the record that survives a restart. So the ribbon group is gone again next
-> time you launch, and the add-in has to be opened from the Add-ins menu again.
-> This is a property of sideloading, not a bug in the add-in — see
-> [`Docs/SPIKE-LNA.md`](Docs/SPIKE-LNA.md) for the evidence and the options for
-> a durable install.
+On macOS: restart Word or Excel (if open), then **Insert** tab → **Add-ins**,
+and click **OpenOfficeLLM** under **MY ADD-INS**.
+
+> **Windows — you have to do this once per Word/Excel session,** and until you
+> do, there is nothing on the ribbon to find. A manifest registered under
+> `WEF\Developer` is scoped to the developer path — Office records it with
+> `UniqueId: developer` and never writes the `AppStates` entry that
+> store-installed add-ins get, which is the record that survives a restart. So
+> the ribbon group is gone again next time you launch, and the add-in has to be
+> opened from the Add-ins menu again. This is a property of sideloading, not a
+> bug in the add-in — see [`Docs/SPIKE-LNA.md`](Docs/SPIKE-LNA.md) for the
+> evidence and the options for a durable install.
 
 If Office says **"Sorry, we can't load the add-in"**, the host service is not
 running. Office loads the pane from it, so there is nothing to show. Run
@@ -211,10 +255,16 @@ npm test
 npm run build:all     # host + task pane + extension
 ```
 
-To build the installer (requires [Inno Setup 6](https://jrsoftware.org/isdl.php)):
+To build the Windows installer (requires [Inno Setup 6](https://jrsoftware.org/isdl.php)):
 
 ```bash
 npm run build:installer    # → dist/OpenOfficeLLM-Setup-<version>.exe
+```
+
+To build the macOS DMG (macOS only — the SEA binary embeds the machine's Node):
+
+```bash
+npm run build:dmg          # → dist/OpenOfficeLLM-<version>-macOS.dmg
 ```
 
 See `packages/host`, `packages/addin` and `packages/extension` for per-package

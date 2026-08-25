@@ -155,7 +155,8 @@ Run the full script on a clean VM:
 
 | Item                     | Notes                                                                                                                                  |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS support            | Same architecture; different installer, keychain trust, `~/Library/Containers` sideload path                                           |
+| Developer ID signing     | Apple's sibling of Authenticode: ~$99/yr, clears Gatekeeper; pair with notarization for the DMG                                        |
+| Keychain-backed secrets  | macOS currently uses the AES-256-GCM fallback; `security`-backed key storage would match DPAPI strength                                |
 | PowerPoint               | Weakest Office.js surface of the three                                                                                                 |
 | Outlook                  | Most aggressive localhost blocking reported ([#6426](https://github.com/OfficeDev/office-js/issues/6426)); needs its own investigation |
 | Office on the web        | Requires a hosted build and cloud-only models                                                                                          |

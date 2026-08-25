@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { logger } from './logging.js'
-import { CA_COMMON_NAME } from './tls.js'
 import { resolveCertDir } from './paths.js'
 
 const PS_ENCODING = 'utf8' as const
@@ -143,6 +142,7 @@ Write-Output 'REMOVED'
 }
 
 export { powershell as runPowershell }
+export { run as runCommand }
 export { escapePsSingle as escapePs }
 
 // ─── macOS ───────────────────────────────────────────────────────────────
@@ -176,22 +176,21 @@ function normalizeFingerprint(value: string): string {
 async function isTrustedDarwin(thumbprint: string): Promise<boolean> {
   const want = normalizeFingerprint(thumbprint)
   if (!want) return false
-  // `-Z` prints the SHA-1 hash for every matching certificate. Searching by
-  // our common name rather than dumping the whole keychain keeps the output
-  // small and avoids matching an unrelated CA with a colliding label.
-  const { code, stdout } = await run('security', [
-    'find-certificate',
-    '-a',
-    '-c',
-    CA_COMMON_NAME,
-    '-Z',
-    loginKeychain(),
-  ])
-  if (code !== 0) return false
-  return stdout
-    .split(/\r?\n/)
-    .filter((l) => l.includes('SHA-1 hash:'))
-    .some((l) => normalizeFingerprint(l.split(':').slice(1).join(':')) === want)
+  // Presence in the keychain is not enough: `add-trusted-cert -r trustAsRoot`
+  // stores the certificate with a trust record that `dump-trust-settings`
+  // surfaces, but WKWebView/Word do not honour it for a loopback TLS chain —
+  // the pane loads as an untrusted certificate. The authoritative check is
+  // `verify-cert -p ssl`, which runs the same trust evaluation the webview
+  // uses. We verify the CA on disk; a leaf that chains to it then verifies too.
+  const caPath = path.join(resolveCertDir(), 'ca.crt')
+  if (!fs.existsSync(caPath)) return false
+  // Refuse to vouch for a CA whose on-disk fingerprint no longer matches the
+  // recorded thumbprint — that happens after a regeneration that has not yet
+  // re-trusted, and reporting it as trusted would mask the stale state.
+  const onDisk = await pemFingerprintDarwin(caPath)
+  if (onDisk && normalizeFingerprint(onDisk) !== want) return false
+  const { code, stdout } = await run('security', ['verify-cert', '-p', 'ssl', '-c', caPath])
+  return code === 0 && /verification successful/i.test(stdout)
 }
 
 async function trustLocalCaDarwin(caPem: string): Promise<string | null> {
@@ -201,13 +200,17 @@ async function trustLocalCaDarwin(caPem: string): Promise<string | null> {
     const fingerprint = await pemFingerprintDarwin(tmpPath)
     if (fingerprint && (await isTrustedDarwin(fingerprint))) return null
 
-    // `-r trustAsRoot` rather than `trustRoot`: this is not a real root CA and
-    // should be trusted only for the chain it actually issues. `-p ssl` scopes
-    // it to TLS, so the same certificate cannot vouch for code signing or S/MIME.
+    // `-r trustRoot` (not `trustAsRoot`): on macOS 14+/26, `trustAsRoot` writes
+    // a trust record that `dump-trust-settings` does not surface and that
+    // WKWebView/Word do not honour for a loopback TLS chain — the pane loads
+    // as an untrusted certificate. `trustRoot` records an explicit SSL trust
+    // policy that does stick and that the system trust evaluator honours.
+    // `-p ssl` scopes it to TLS, so the same certificate cannot vouch for code
+    // signing or S/MIME.
     const { code, stderr, stdout } = await run('security', [
       'add-trusted-cert',
       '-r',
-      'trustAsRoot',
+      'trustRoot',
       '-p',
       'ssl',
       '-k',

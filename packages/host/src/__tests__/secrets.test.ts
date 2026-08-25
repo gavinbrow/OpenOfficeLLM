@@ -3,18 +3,24 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { setSecret, getSecret, deleteSecret, listConfigured, isFallbackMode } from '../secrets.js'
+import { resolveSecretsPath } from '../paths.js'
 
 const TMP_DIR = path.join(os.tmpdir(), `ool-test-${process.pid}-${Date.now()}`)
 
+// paths.ts picks its root per platform: %APPDATA% on Windows, $HOME on macOS.
+// Redirect both so the suite exercises a throwaway store on every platform.
 function withTempSecrets<T>(fn: () => Promise<T>): Promise<T> {
   const origAppData = process.env.APPDATA
+  const origHome = process.env.HOME
   const tmpAppData = path.join(TMP_DIR, 'appdata')
   fs.mkdirSync(tmpAppData, { recursive: true })
   process.env.APPDATA = tmpAppData
+  process.env.HOME = TMP_DIR
   try {
     return fn()
   } finally {
     process.env.APPDATA = origAppData
+    process.env.HOME = origHome
     try {
       fs.rmSync(TMP_DIR, { recursive: true, force: true })
     } catch {
@@ -47,10 +53,7 @@ describe('secrets', () => {
       expect(ids).toContain('anthropic')
       expect(ids).toContain('openai')
       expect(ids.every((id) => typeof id === 'string')).toBe(true)
-      const file = fs.readFileSync(
-        path.join(process.env.APPDATA!, 'OpenOfficeLLM', 'secrets.dat'),
-        'utf8',
-      )
+      const file = fs.readFileSync(resolveSecretsPath(), 'utf8')
       expect(file).not.toContain('sk-secret-value-aaa')
       expect(file).not.toContain('sk-secret-value-bbb')
     })
