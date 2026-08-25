@@ -169,3 +169,10 @@ step('compiling installer with Inno Setup', () => {
     console.warn(`\n[build-installer] ISCC ran but ${expected} was not found — check ISCC output`)
   }
 })
+
+// ─── 6. Create the update zip ─────────────────────────────────────────────
+step('creating update zip', () => {
+  const zipPath = join(DIST_OUT, `OpenOfficeLLM-${VERSION}-win.zip`)
+  execFileSync('tar', ['-a', '-cf', zipPath, '-C', STAGING, '.'], { stdio: 'inherit' })
+  console.log(`  created: ${zipPath}`)
+})

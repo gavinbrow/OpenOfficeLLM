@@ -18,6 +18,7 @@ import type {
   ProviderInfo,
   Settings,
   Skill,
+  UpdateApplyResponse,
 } from '@openofficellm/shared'
 
 export interface ModelsResponse {
@@ -197,6 +198,14 @@ export async function getHealth(): Promise<HealthResponse> {
   })
   if (!res.ok) throw await parseError(res)
   return (await res.json()) as HealthResponse
+}
+
+export async function applyUpdate(): Promise<UpdateApplyResponse> {
+  return jsonRequest<UpdateApplyResponse>('POST', '/api/update/apply')
+}
+
+export async function skipUpdate(version: string): Promise<void> {
+  await jsonRequest<void>('POST', '/api/update/skip', { version })
 }
 
 export function getProviders(): Promise<ProvidersResponse> {

@@ -6,6 +6,7 @@ import { streamSSE } from 'hono/streaming'
 import type { Context } from 'hono'
 import { serve } from '@hono/node-server'
 import { DEFAULT_PORT, HOST_INTERFACE, HOST_VERSION, ensureDirs } from './paths.js'
+import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate } from './update.js'
 import { z } from 'zod'
 import {
   loadConfig,
@@ -303,11 +304,14 @@ export async function startServer(
   })
 
   app.get('/api/health', (c) => {
+    const cached = getCachedUpdate()
     const resp: HealthResponse = {
       status: 'ok',
       version: HOST_VERSION,
       port,
       uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
+      updateAvailable: cached?.updateAvailable,
+      latestVersion: cached?.latestVersion,
     }
     return c.json(resp)
   })
@@ -823,6 +827,27 @@ export async function startServer(
     })
   })
 
+  app.get('/api/update/check', async (c) => {
+    const force = c.req.query('force') === '1'
+    const result = await checkForUpdate(force)
+    return c.json(result)
+  })
+
+  app.post('/api/update/skip', async (c) => {
+    const body = await c.req.json().catch(() => ({}))
+    const version = typeof body.version === 'string' ? body.version : ''
+    if (version) skipVersion(version)
+    return c.json({ ok: true })
+  })
+
+  app.post('/api/update/apply', async (c) => {
+    const result = await applyUpdate()
+    if (result.ok) {
+      setImmediate(() => process.kill(process.pid, 'SIGTERM'))
+    }
+    return c.json(result)
+  })
+
   app.all('/api/*', (c) => {
     return c.json({ code: 'not_found', message: 'not found' }, 404)
   })
@@ -855,6 +880,8 @@ export async function startServer(
     server.once('listening', () => resolve())
     server.once('error', reject)
   })
+
+  checkForUpdate().catch(() => {})
 
   logger.info({ msg: `listening on https://${HOST_INTERFACE}:${port}` })
 

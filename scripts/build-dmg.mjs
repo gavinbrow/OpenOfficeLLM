@@ -296,3 +296,12 @@ step('creating DMG', () => {
     console.warn(`\n[build-dmg] hdiutil ran but ${dmg} was not found — check hdiutil output`)
   }
 })
+
+// ─── 8. Create the update zip ─────────────────────────────────────────────
+step('creating update zip', () => {
+  const zipPath = join(DIST_OUT, `OpenOfficeLLM-${VERSION}-macOS.zip`)
+  execFileSync('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP_DIR, zipPath], {
+    stdio: 'inherit',
+  })
+  console.log(`  created: ${zipPath}`)
+})

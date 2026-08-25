@@ -41,14 +41,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OpenOfficeLLM-Setup
-          path: dist/OpenOfficeLLM-Setup-*.exe
+          path: |
+            dist/OpenOfficeLLM-Setup-*.exe
+            dist/OpenOfficeLLM-*-win.zip
           if-no-files-found: error
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/OpenOfficeLLM-Setup-*.exe
+          files: |
+            dist/OpenOfficeLLM-Setup-*.exe
+            dist/OpenOfficeLLM-*-win.zip
           generate_release_notes: true
           draft: true
 
@@ -80,13 +84,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OpenOfficeLLM-DMG
-          path: dist/OpenOfficeLLM-*-macOS.dmg
+          path: |
+            dist/OpenOfficeLLM-*-macOS.dmg
+            dist/OpenOfficeLLM-*-macOS.zip
           if-no-files-found: error
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/OpenOfficeLLM-*-macOS.dmg
+          files: |
+            dist/OpenOfficeLLM-*-macOS.dmg
+            dist/OpenOfficeLLM-*-macOS.zip
           generate_release_notes: true
           draft: true

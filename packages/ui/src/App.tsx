@@ -14,7 +14,8 @@ import { UsageBar } from './components/UsageBar'
 import { Sidebar, SidebarToggle } from './components/Sidebar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { ErrorBanner, Toasts } from './components/ErrorBanner'
-import { SettingsIcon } from './components/icons'
+import { SettingsIcon, CloseIcon } from './components/icons'
+import { UpdateBadge } from './components/UpdateBadge'
 import { applyTheme } from './theme'
 
 export function App() {
@@ -23,10 +24,14 @@ export function App() {
   const openSettings = useUiStore((s) => s.openSettings)
   const theme = useUiStore((s) => s.theme)
   const setServiceDown = useUiStore((s) => s.setServiceDown)
+  const setUpdateAvailable = useUiStore((s) => s.setUpdateAvailable)
   const loadModels = useModelsStore((s) => s.load)
   const loadSettings = useSettingsStore((s) => s.load)
   const setTheme = useUiStore((s) => s.setTheme)
   const savedTheme = useSettingsStore((s) => s.settings.theme)
+  const updateCountdown = useUiStore((s) => s.updateCountdown)
+  const latestVersion = useUiStore((s) => s.latestVersion)
+  const cancelUpdateCountdown = useUiStore((s) => s.cancelUpdateCountdown)
 
   useEffect(() => {
     applyTheme(theme)
@@ -46,6 +51,7 @@ export function App() {
         if (cancelled) return
         if (h.status === 'ok' || h.status === 'degraded') {
           setServiceDown(false, h.version)
+          setUpdateAvailable(h.updateAvailable ?? false, h.latestVersion ?? null)
           void loadModels()
           void loadSettings()
         } else {
@@ -58,7 +64,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [setServiceDown, loadModels, loadSettings])
+  }, [setServiceDown, setUpdateAvailable, loadModels, loadSettings])
 
   if (serviceDown) {
     return (
@@ -85,6 +91,7 @@ export function App() {
           <header className="flex shrink-0 items-center gap-1.5 border-b border-surface-border p-1.5">
             <SidebarToggle />
             <div className="flex-1" />
+            <UpdateBadge />
             <button
               className="btn btn-ghost h-8 w-8"
               onClick={openSettings}
@@ -116,6 +123,20 @@ export function App() {
         </main>
       </div>
       <SettingsPanel />
+      {updateCountdown !== null && (
+        <div className="fixed bottom-3 right-3 z-50 flex items-center gap-2 rounded-lg bg-surface-inverse px-3 py-2 text-xs text-fg-inverse shadow-pop">
+          <span>
+            Updating to v{latestVersion ?? ''} — restarting in {updateCountdown}…{' '}
+          </span>
+          <button
+            className="icon-btn h-4 w-4"
+            onClick={cancelUpdateCountdown}
+            aria-label="Cancel update"
+          >
+            <CloseIcon size={10} />
+          </button>
+        </div>
+      )}
       <Toasts />
     </div>
   )

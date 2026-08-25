@@ -1,6 +1,7 @@
 // UI store: theme, sidebar/settings visibility, service-down state, toasts.
 
 import { create } from 'zustand'
+import { applyUpdate } from '../api/client'
 import { loadPersisted, savePersisted } from './persist'
 
 export type Theme = 'light' | 'dark' | 'office'
@@ -18,6 +19,9 @@ export interface UiState {
   settingsOpen: boolean
   serviceDown: boolean
   serviceVersion: string | null
+  updateAvailable: boolean
+  latestVersion: string | null
+  updateCountdown: number | null
   toasts: Toast[]
   /** Incremented to signal "open the model selector" — ModelSelector watches
    *  this and opens itself when the value changes. Decouples error recovery
@@ -29,10 +33,16 @@ export interface UiState {
   openSettings: () => void
   closeSettings: () => void
   setServiceDown: (down: boolean, version?: string | null) => void
+  setUpdateAvailable: (available: boolean, version: string | null) => void
+  startUpdateCountdown: () => void
+  cancelUpdateCountdown: () => void
+  tickUpdateCountdown: () => void
   toast: (t: Omit<Toast, 'id'>) => void
   dismissToast: (id: number) => void
   openModelSelectorHint: () => void
 }
+
+let countdownInterval: ReturnType<typeof setInterval> | null = null
 
 let toastId = 0
 
@@ -42,6 +52,9 @@ export const useUiStore = create<UiState>((set) => ({
   settingsOpen: false,
   serviceDown: false,
   serviceVersion: null,
+  updateAvailable: false,
+  latestVersion: null,
+  updateCountdown: null,
   toasts: [],
   modelSelectorHint: 0,
   setTheme: (t) => {
@@ -61,6 +74,36 @@ export const useUiStore = create<UiState>((set) => ({
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
   setServiceDown: (down, version = null) => set({ serviceDown: down, serviceVersion: version }),
+  setUpdateAvailable: (available, version) =>
+    set({ updateAvailable: available, latestVersion: version }),
+  startUpdateCountdown: () => {
+    if (countdownInterval) clearInterval(countdownInterval)
+    set({ updateCountdown: 5 })
+    countdownInterval = setInterval(() => {
+      useUiStore.getState().tickUpdateCountdown()
+    }, 1000)
+  },
+  cancelUpdateCountdown: () => {
+    if (countdownInterval) {
+      clearInterval(countdownInterval)
+      countdownInterval = null
+    }
+    set({ updateCountdown: null })
+  },
+  tickUpdateCountdown: () => {
+    const current = useUiStore.getState().updateCountdown
+    if (current === null) return
+    if (current <= 1) {
+      if (countdownInterval) {
+        clearInterval(countdownInterval)
+        countdownInterval = null
+      }
+      set({ updateCountdown: null })
+      void applyUpdate().catch(() => {})
+      return
+    }
+    set({ updateCountdown: current - 1 })
+  },
   toast: (t) => {
     const id = ++toastId
     set((s) => ({ toasts: [...s.toasts, { ...t, id }] }))

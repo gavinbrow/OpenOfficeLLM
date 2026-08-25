@@ -531,6 +531,10 @@ export interface HealthResponse {
   version: string
   port: number
   uptimeSeconds: number
+  /** True when the host has seen a newer version on the update feed. */
+  updateAvailable?: boolean
+  /** Latest version available on the update feed, if a check has run. */
+  latestVersion?: string
 }
 
 /** Server echoes the request id it assigned for a chat, so the pane can
@@ -543,4 +547,21 @@ export interface ApiError {
   code: string
   message: string
   retryable?: boolean
+}
+
+// ─── Update check / apply ─────────────────────────────────────────────────
+
+export interface UpdateCheckResponse {
+  updateAvailable: boolean
+  currentVersion: string
+  latestVersion: string
+  /** ISO timestamp of the release, for the "released" line in the UI. */
+  publishedAt?: string
+  /** Short release notes body (already markdown-trimmed by the host). */
+  releaseNotes?: string
+}
+
+export interface UpdateApplyResponse {
+  ok: boolean
+  message?: string
 }
