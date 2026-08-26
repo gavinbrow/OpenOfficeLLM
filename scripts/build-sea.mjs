@@ -139,7 +139,11 @@ step(`finalizing ${EXE_OUT}`, () => {
     // enough to run locally. A Developer ID signature + notarization is
     // future work for distribution outside this machine.
     try {
-      execFileSync('codesign', ['--force', '--sign', '-', EXE_OUT], { stdio: 'inherit' })
+      execFileSync(
+        'codesign',
+        ['--force', '--sign', '-', EXE_OUT],
+        { stdio: 'inherit' },
+      )
       console.log('[build-sea] ad-hoc codesigned')
     } catch {
       console.warn(

@@ -246,12 +246,29 @@ exec "$DIR/openofficellm-host" --no-browser
   console.log('  staged: Contents/MacOS/launcher (0755)')
 })
 
-// ─── 6. Codesign (ad-hoc) ─────────────────────────────────────────────────
-step('codesigning the app bundle', () => {
-  // Ad-hoc signing is required for arm64 execution; Developer ID signing and
-  // notarization are future work.
+// ─── 6. Create the DMG (copies + codesigns the app) ──────────────────────
+step('creating DMG', () => {
+  mkdirSync(DIST_OUT, { recursive: true })
+  // hdiutil -srcfolder copies the folder's CONTENTS, so a source folder that
+  // pairs the app with an "Applications" symlink to /Applications gives the
+  // user the standard drag-to-Applications window.
+  const dmgSrc = join(STAGING, 'dmg-src')
+  rmSync(dmgSrc, { recursive: true, force: true })
+  // Pair the app with an "Applications" symlink to /Applications so the user
+  // gets the standard drag-to-Applications install window.
+  cpSync(APP_DIR, join(dmgSrc, 'OpenOfficeLLM.app'), { recursive: true })
+  execFileSync('ln', ['-s', '/Applications', join(dmgSrc, 'Applications')])
+
+  // Codesign AFTER cpSync — copying with cpSync recreates files with new
+  // inodes, which invalidates the code directory hashes. Signing here, on the
+  // copy that hdiutil reads, leaves APP_DIR unsigned but the DMG contents
+  // correctly signed.
   try {
-    execFileSync('codesign', ['--force', '--deep', '--sign', '-', APP_DIR], { stdio: 'inherit' })
+    execFileSync(
+      'codesign',
+      ['--force', '--deep', '--sign', '-', join(dmgSrc, 'OpenOfficeLLM.app')],
+      { stdio: 'inherit' },
+    )
   } catch (e) {
     if (e.code === 'ENOENT') {
       console.error('[build-dmg] codesign not found — the DMG build must run on macOS.')
@@ -259,22 +276,8 @@ step('codesigning the app bundle', () => {
     }
     throw e
   }
-})
+  console.log('  codesigned dmg-src/OpenOfficeLLM.app')
 
-// ─── 7. Create the DMG ────────────────────────────────────────────────────
-step('creating DMG', () => {
-  mkdirSync(DIST_OUT, { recursive: true })
-  // hdiutil -srcfolder copies the folder's CONTENTS, so a source folder that
-  // pairs the app with an "Applications" symlink to /Applications gives the
-  // user the standard drag-to-Applications window. Creating the symlink after
-  // codesign keeps the app bundle's signature intact.
-  const dmgSrc = join(STAGING, 'dmg-src')
-  rmSync(dmgSrc, { recursive: true, force: true })
-  // Pair the app with an "Applications" symlink to /Applications so the user
-  // gets the standard drag-to-Applications install window. The symlink is
-  // created after codesign so the app bundle's signature stays intact.
-  cpSync(APP_DIR, join(dmgSrc, 'OpenOfficeLLM.app'), { recursive: true })
-  execFileSync('ln', ['-s', '/Applications', join(dmgSrc, 'Applications')])
   const dmg = join(DIST_OUT, `OpenOfficeLLM-${VERSION}-macOS.dmg`)
   try {
     execFileSync(
@@ -297,11 +300,26 @@ step('creating DMG', () => {
   }
 })
 
-// ─── 8. Create the update zip ─────────────────────────────────────────────
+// ─── 7. Create the update zip ─────────────────────────────────────────────
+// Sign a second copy for the zip — the zip is used by the auto-updater to
+// replace the app in place. The ditto archive preserves signatures, so the
+// signed app in /Applications stays signed after the helper script swaps it.
 step('creating update zip', () => {
+  const zipSrc = join(STAGING, 'zip-src')
+  rmSync(zipSrc, { recursive: true, force: true })
+  cpSync(APP_DIR, join(zipSrc, 'OpenOfficeLLM.app'), { recursive: true })
+    execFileSync(
+      'codesign',
+      ['--force', '--deep', '--sign', '-', join(zipSrc, 'OpenOfficeLLM.app')],
+      { stdio: 'inherit' },
+    )
   const zipPath = join(DIST_OUT, `OpenOfficeLLM-${VERSION}-macOS.zip`)
-  execFileSync('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', APP_DIR, zipPath], {
-    stdio: 'inherit',
-  })
+  execFileSync(
+    'ditto',
+    ['-c', '-k', '--sequesterRsrc', '--keepParent', join(zipSrc, 'OpenOfficeLLM.app'), zipPath],
+    {
+      stdio: 'inherit',
+    },
+  )
   console.log(`  created: ${zipPath}`)
 })
