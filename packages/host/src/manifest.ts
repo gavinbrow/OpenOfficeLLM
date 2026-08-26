@@ -10,7 +10,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { resolveManifestDir, ensureDirs, HOST_INTERFACE } from './paths.js'
+import { resolveManifestDir, ensureDirs, HOST_INTERFACE, HOST_VERSION } from './paths.js'
 import { logger } from './logging.js'
 
 /** Stable across versions and installs. Office keys its per-add-in state off
@@ -19,11 +19,35 @@ import { logger } from './logging.js'
  *  (7e3d0a41-…) — the two must be able to coexist during development. */
 export const ADDIN_ID = 'b7f5a2c1-3d84-4e6f-9a12-5c8e0d4b7f93'
 
-/** Office silently declines to surface a manifest whose version is below 1.0 —
- *  no error in the ribbon, the add-ins dialog, or Office's own runtime log.
- *  This cost a day in P0.2; the only tool that reported it was
- *  `office-addin-manifest validate`. Keep the leading component >= 1. */
-export const MANIFEST_VERSION = '1.0.0.0'
+/**
+ * The manifest's `<Version>`, derived from the app version rather than fixed.
+ *
+ * Office surfaces this string — it is the number in the task pane's
+ * "Security Info" dialog — so a hardcoded constant means the pane advertises a
+ * version that has nothing to do with the build the user is running.
+ *
+ * It cannot simply *be* the app version. Office silently declines a manifest
+ * whose version is below 1.0: no error in the ribbon, the add-ins dialog, or
+ * Office's own runtime log. That cost a day in P0.2, and the only tool that
+ * reported it was `office-addin-manifest validate`:
+ *
+ *   Error #1: Manifest Version Too Low: The manifest has unsupported version
+ *   number less than 1.0.
+ *
+ * So a 0.x app version is shifted one place right under a leading 1. The real
+ * version stays legible (0.1.2 → 1.0.1.2) and the ordering never runs
+ * backwards, including across the eventual 0.x → 1.0 boundary — which a bare
+ * `1.0.<minor>.<patch>` would break, since 0.9.9 → 1.0.9.9 and then 1.0.0 →
+ * 1.0.0.0 is a downgrade as far as Office's manifest cache is concerned.
+ */
+export function manifestVersionFor(appVersion: string): string {
+  const [major = 0, minor = 0, patch = 0] = appVersion
+    .split('.')
+    .map((n) => Number.parseInt(n, 10) || 0)
+  return `1.${major}.${minor}.${patch}`
+}
+
+export const MANIFEST_VERSION = manifestVersionFor(HOST_VERSION)
 
 export const MANIFEST_FILENAME = 'openofficellm.xml'
 

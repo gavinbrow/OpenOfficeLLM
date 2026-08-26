@@ -279,10 +279,52 @@ step('creating DMG', () => {
   console.log('  codesigned dmg-src/OpenOfficeLLM.app')
 
   const dmg = join(DIST_OUT, `OpenOfficeLLM-${VERSION}-macOS.dmg`)
+
+  // Do NOT let hdiutil size the image itself. A bare
+  // `create -srcfolder ... -format UDZO` derives the volume size from the
+  // source and gets it wrong: on the CI runner it created and mounted the
+  // volume, then failed partway through copying files in with
+  //
+  //   hdiutil: create failed - No space left on device
+  //   could not access /Volumes/OpenOfficeLLM/OpenOfficeLLM.app/Contents/MacOS/openofficellm-host
+  //
+  // It ran out of room on the largest file in the bundle, the ~100 MB SEA
+  // binary. The estimate leaves nothing for HFS+ metadata or the extended
+  // attributes codesign writes, and the runner's own free disk was never the
+  // problem — staging and codesigning the same bytes had just succeeded.
+  //
+  // So: measure the source, add real headroom, create a read-write image at
+  // that explicit size, then compress it. Same two-step create-dmg uses. The
+  // slack costs nothing in the shipped artifact — UDZO compresses untouched
+  // free blocks down to almost nothing.
+  const srcMb = Math.ceil(
+    Number.parseInt(
+      execFileSync('du', ['-sk', dmgSrc], { encoding: 'utf8' }).trim().split(/s+/)[0],
+      10,
+    ) / 1024,
+  )
+  const sizeMb = srcMb + 200
+  const rwDmg = join(STAGING, 'OpenOfficeLLM-rw.dmg')
+  rmSync(rwDmg, { force: true })
+
   try {
     execFileSync(
       'hdiutil',
-      ['create', '-volname', 'OpenOfficeLLM', '-srcfolder', dmgSrc, '-ov', '-format', 'UDZO', dmg],
+      [
+        'create',
+        '-volname',
+        'OpenOfficeLLM',
+        '-srcfolder',
+        dmgSrc,
+        '-fs',
+        'HFS+',
+        '-format',
+        'UDRW',
+        '-size',
+        `${sizeMb}m`,
+        '-ov',
+        rwDmg,
+      ],
       { stdio: 'inherit' },
     )
   } catch (e) {
@@ -292,6 +334,14 @@ step('creating DMG', () => {
     }
     throw e
   }
+  console.log(`  staged read-write image: ${sizeMb} MB for ${srcMb} MB of content`)
+
+  execFileSync(
+    'hdiutil',
+    ['convert', rwDmg, '-format', 'UDZO', '-imagekey', 'zlib-level=9', '-ov', '-o', dmg],
+    { stdio: 'inherit' },
+  )
+  rmSync(rwDmg, { force: true })
 
   if (existsSync(dmg)) {
     console.log(`\n[build-dmg] done: ${dmg}`)
