@@ -65,6 +65,13 @@ Source: "staging\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; Idempotent, so this is the same command for fresh install and upgrade — the
 ; host detects what's already done and skips it.
 Filename: "{app}\host.exe"; Parameters: "--install"; Flags: runhidden; StatusMsg: "Setting up the add-in..."
+; Start the host now. --install only *enables* autostart, which does not fire
+; until the next logon; until something is actually listening on 7317 Office
+; has nowhere to fetch the pane from and Word reports that it cannot load the
+; add-in. Installing and then opening Word — the obvious thing to do — hit
+; exactly that window. acquireLock() makes a redundant instance exit cleanly,
+; so this is safe even if one is somehow already running.
+Filename: "{app}\host.exe"; Flags: nowait runhidden; StatusMsg: "Starting OpenOfficeLLM..."
 
 [Icons]
 ; Start menu shortcut — launches the host (which serves the pane and brokers calls).

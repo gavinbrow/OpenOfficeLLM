@@ -102,11 +102,20 @@ step('compiling installer with Inno Setup', () => {
   // ISCC exits non-zero from /? (it prints help to stderr and returns 1),
   // so we accept any output as "found" rather than requiring exit 0.
   let iscc = null
+  const localAppData = process.env.LOCALAPPDATA
   const candidates = [
     'ISCC.exe',
     join('C:', 'Program Files (x86)', 'Inno Setup 6', 'ISCC.exe'),
     join('C:', 'Program Files', 'Inno Setup 6', 'ISCC.exe'),
     join('C:', 'Program Files', 'Inno Setup 7', 'ISCC.exe'),
+    // winget installs Inno Setup per-user by default, which lands here rather
+    // than in Program Files.
+    ...(localAppData
+      ? [
+          join(localAppData, 'Programs', 'Inno Setup 6', 'ISCC.exe'),
+          join(localAppData, 'Programs', 'Inno Setup 7', 'ISCC.exe'),
+        ]
+      : []),
   ]
   for (const c of candidates) {
     try {
