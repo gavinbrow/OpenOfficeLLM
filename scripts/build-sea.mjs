@@ -16,8 +16,8 @@
 //
 // Result: packages/host/host.exe (Windows) or packages/host/openofficellm-host
 // (macOS) — a ~45 MB binary that runs without Node installed. The web bundle
-// and win-dpapi.node are NOT inside the binary; the installer stages them
-// alongside it (see scripts/build-installer.mjs).
+// is NOT inside the binary; the installer stages it alongside it (see
+// scripts/build-installer.mjs).
 
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, chmodSync, existsSync, renameSync, unlinkSync } from 'node:fs'

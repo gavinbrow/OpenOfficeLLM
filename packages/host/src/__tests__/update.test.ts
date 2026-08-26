@@ -10,6 +10,24 @@ import { HOST_VERSION } from '../paths.js'
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ool-update-'))
 const HOME = path.join(TMP_DIR, 'home')
 
+// Derive version tags from HOST_VERSION so the tests don't rot on every bump.
+// The "current" tag equals the running version; the "newer" tag is one minor
+// release ahead; the "older" tag is one minor release behind.
+const CURRENT_TAG = `v${HOST_VERSION}`
+function newerTag(): string {
+  const parts = HOST_VERSION.split('.').map(Number)
+  parts[1] = (parts[1] ?? 0) + 1
+  return 'v' + parts.join('.')
+}
+function olderTag(): string {
+  const parts = HOST_VERSION.split('.').map(Number)
+  parts[1] = Math.max(0, (parts[1] ?? 0) - 1)
+  return 'v' + parts.join('.')
+}
+function newerVersion(): string {
+  return newerTag().slice(1)
+}
+
 const ORIG_HOME = process.env.HOME
 const ORIG_APPDATA = process.env.APPDATA
 const ORIG_HOMEDIR = os.homedir
@@ -71,33 +89,33 @@ afterAll(() => {
 
 describe('checkForUpdate', () => {
   it('detects a newer release and writes the state file', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.2.0'))
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(newerTag()))
     const res = await checkForUpdate(true)
     expect(res.updateAvailable).toBe(true)
-    expect(res.latestVersion).toBe('0.2.0')
+    expect(res.latestVersion).toBe(newerVersion())
     expect(res.currentVersion).toBe(HOST_VERSION)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     const state = readStateFile()
     expect(state).not.toBeNull()
-    expect(state!.latestVersion).toBe('0.2.0')
+    expect(state!.latestVersion).toBe(newerVersion())
     expect(state!.downloadUrl).toBe(
       process.platform === 'win32' ? 'https://example.com/win.zip' : 'https://example.com/mac.zip',
     )
   })
 
   it('uses the cache when force is false and skips a second fetch', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.2.0'))
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(newerTag()))
     await checkForUpdate(true)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     fetchSpy.mockClear()
     const cached = await checkForUpdate()
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(cached.updateAvailable).toBe(true)
-    expect(cached.latestVersion).toBe('0.2.0')
+    expect(cached.latestVersion).toBe(newerVersion())
   })
 
   it('force=true bypasses the cache and fetches again', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.2.0'))
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(newerTag()))
     await checkForUpdate(true)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     fetchSpy.mockClear()
@@ -106,10 +124,10 @@ describe('checkForUpdate', () => {
   })
 
   it('reports updateAvailable false when already up to date', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.1.0'))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(CURRENT_TAG))
     const res = await checkForUpdate(true)
     expect(res.updateAvailable).toBe(false)
-    expect(res.latestVersion).toBe('0.1.0')
+    expect(res.latestVersion).toBe(HOST_VERSION)
   })
 
   it('returns updateAvailable false and empty latestVersion on network failure', async () => {
@@ -127,16 +145,22 @@ describe('getCachedUpdate', () => {
   })
 
   it('returns the cached update after a successful check', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.2.0'))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(newerTag()))
     await checkForUpdate(true)
     const cached = getCachedUpdate()
     expect(cached).not.toBeNull()
     expect(cached!.updateAvailable).toBe(true)
-    expect(cached!.latestVersion).toBe('0.2.0')
+    expect(cached!.latestVersion).toBe(newerVersion())
   })
 
   it('returns null when the cached version equals the current version', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.1.0'))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(CURRENT_TAG))
+    await checkForUpdate(true)
+    expect(getCachedUpdate()).toBeNull()
+  })
+
+  it('returns null when the cached latest version is older than the current version', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(olderTag()))
     await checkForUpdate(true)
     expect(getCachedUpdate()).toBeNull()
   })
@@ -144,13 +168,13 @@ describe('getCachedUpdate', () => {
 
 describe('skipVersion', () => {
   it('marks the latest version as skipped so getCachedUpdate returns null', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease('v0.2.0'))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(fakeRelease(newerTag()))
     await checkForUpdate(true)
     expect(getCachedUpdate()).not.toBeNull()
-    skipVersion('0.2.0')
+    skipVersion(newerVersion())
     expect(getCachedUpdate()).toBeNull()
     const state = readStateFile()
-    expect(state!.skippedVersion).toBe('0.2.0')
+    expect(state!.skippedVersion).toBe(newerVersion())
   })
 })
 

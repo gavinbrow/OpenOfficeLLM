@@ -182,8 +182,8 @@ export async function checkForUpdate(force?: boolean): Promise<UpdateCheckRespon
 export function getCachedUpdate(): UpdateCheckResponse | null {
   const state = readState()
   if (!state.latestVersion) return null
-  if (state.latestVersion === HOST_VERSION) return null
   if (state.latestVersion === state.skippedVersion) return null
+  if (compareVersions(state.latestVersion, HOST_VERSION) <= 0) return null
   return {
     updateAvailable: true,
     currentVersion: HOST_VERSION,

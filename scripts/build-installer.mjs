@@ -4,31 +4,30 @@
 // Pipeline:
 //   1. npm run build          → host dist + add-in dist + shared
 //   2. build:sea              → host.exe (Node SEA binary)
-//   3. npm rebuild win-dpapi  → win-dpapi.node (native addon)
-//   4. Stage everything into installer/staging/
-//   5. ISCC installer.iss     → dist/OpenOfficeLLM-Setup-<version>.exe
+//   3. Stage everything into installer/staging/
+//   4. ISCC installer.iss     → dist/OpenOfficeLLM-Setup-<version>.exe
 //
 // The staging directory mirrors what the installer copies to the user's machine:
 //
 //   installer/staging/
 //     host.exe               ← the SEA binary
-//     win-dpapi.node         ← prebuilt native addon (may be absent → fallback)
 //     web/                   ← add-in bundle (index.html, commands.html, assets/, icons)
 //     version.txt            ← version string for runtime version checks
 //
 // Prerequisites:
 //   - Node 22 (already installed — you're running this)
 //   - Inno Setup 6 (ISCC.exe on PATH, or at the default install location)
-//   - Windows Build Tools (for npm rebuild win-dpapi): Python + a C++ compiler.
-//     If unavailable, win-dpapi.node is skipped and the host falls back to
-//     AES-256-GCM secret storage — the installer still builds.
+//
+// Secrets: DPAPI is invoked at runtime via Windows PowerShell (.NET
+// System.Security.Cryptography.ProtectedData), so no native addon is built or
+// staged here. If DPAPI is unavailable on the host, secrets fall back to
+// AES-256-GCM.
 
 import { execSync, execFileSync } from 'node:child_process'
 import {
   copyFileSync,
   cpSync,
   existsSync,
-  globSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -74,26 +73,7 @@ step('building host.exe (Node SEA)', () => {
   }
 })
 
-// ─── 3. Build win-dpapi.node ──────────────────────────────────────────────
-let winDpapiNode = null
-step('building win-dpapi native addon', () => {
-  try {
-    run('npm rebuild win-dpapi', { cwd: root })
-    // The .node file lands in node_modules/win-dpapi/build/Release/ or similar.
-    const hits = globSync('**/*.node', { cwd: join(root, 'node_modules', 'win-dpapi') })
-    if (hits.length > 0) {
-      winDpapiNode = join(root, 'node_modules', 'win-dpapi', hits[0])
-      console.log(`  found: ${winDpapiNode}`)
-    } else {
-      console.warn('  win-dpapi.node not found after rebuild — secrets will use the AES fallback')
-    }
-  } catch (e) {
-    console.warn(`  npm rebuild win-dpapi failed — secrets will use the AES fallback`)
-    console.warn(`  ${String(e.message ?? e)}`)
-  }
-})
-
-// ─── 4. Stage the payload ─────────────────────────────────────────────────
+// ─── 3. Stage the payload ─────────────────────────────────────────────────
 step('staging installer payload', () => {
   // Clean any previous staging.
   rmSync(STAGING, { recursive: true, force: true })
@@ -102,12 +82,6 @@ step('staging installer payload', () => {
   // host.exe
   copyFileSync(join(HOST_DIR, 'host.exe'), join(STAGING, 'host.exe'))
   console.log('  staged: host.exe')
-
-  // win-dpapi.node (if built)
-  if (winDpapiNode) {
-    copyFileSync(winDpapiNode, join(STAGING, 'win-dpapi.node'))
-    console.log('  staged: win-dpapi.node')
-  }
 
   // web/ — the entire add-in dist directory
   if (!existsSync(ADDIN_DIST)) {
@@ -122,7 +96,7 @@ step('staging installer payload', () => {
   console.log(`  staged: version.txt (${VERSION})`)
 })
 
-// ─── 5. Compile with Inno Setup ───────────────────────────────────────────
+// ─── 4. Compile with Inno Setup ───────────────────────────────────────────
 step('compiling installer with Inno Setup', () => {
   // Find ISCC.exe — on PATH, or at the default install locations.
   // ISCC exits non-zero from /? (it prints help to stderr and returns 1),
@@ -170,7 +144,7 @@ step('compiling installer with Inno Setup', () => {
   }
 })
 
-// ─── 6. Create the update zip ─────────────────────────────────────────────
+// ─── 5. Create the update zip ─────────────────────────────────────────────
 step('creating update zip', () => {
   const zipPath = join(DIST_OUT, `OpenOfficeLLM-${VERSION}-win.zip`)
   execFileSync('tar', ['-a', '-cf', zipPath, '-C', STAGING, '.'], { stdio: 'inherit' })

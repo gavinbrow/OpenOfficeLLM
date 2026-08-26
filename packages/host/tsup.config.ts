@@ -14,9 +14,7 @@ export default defineConfig({
   sourcemap: true,
   // Bundle EVERYTHING into the output. Node SEA's require() only supports
   // built-in modules — any `require('hono')` etc. in the bundle fails with
-  // ERR_UNKNOWN_BUILTIN_MODULE. The only thing that must stay external is
-  // win-dpapi (native addon, loaded via process.dlopen at runtime).
+  // ERR_UNKNOWN_BUILTIN_MODULE.
   noExternal: [/.*/],
-  external: ['win-dpapi'],
   banner: { js: '#!/usr/bin/env node' },
 })

@@ -45,6 +45,48 @@ describe('secrets', () => {
     })
   })
 
+  it('round-trips a secret when DPAPI is available', async () => {
+    await withTempSecrets(async () => {
+      // Force a DPAPI probe; on Windows this exercises the PowerShell path,
+      // on other platforms the AES fallback is used.
+      setSecret('anthropic', 'sk-dpapi-roundtrip-456')
+      if (!isFallbackMode()) {
+        const file = fs.readFileSync(resolveSecretsPath(), 'utf8')
+        // New DPAPI blobs must be written with the 'dpapi:' prefix.
+        expect(file).toContain('"dpapi:')
+      }
+      expect(getSecret('anthropic')).toBe('sk-dpapi-roundtrip-456')
+    })
+  })
+
+  it('an existing fb: blob still decrypts when DPAPI is available', async () => {
+    await withTempSecrets(async () => {
+      // Simulate an existing user's secrets file written by a previous build
+      // that only ever used the AES fallback. We construct an 'fb:' blob
+      // directly with a fixed key, bypassing setSecret (which would write
+      // 'dpapi:' when DPAPI is available).
+      const { resolveSecretsPath, ensureDirs } = await import('../paths.js')
+      ensureDirs()
+      const storePath = resolveSecretsPath()
+
+      const fallbackKey = 'ool-test-fallback-key-32-bytes-long!!'
+      process.env.OPENOFFICELLM_SECRETS_FALLBACK_KEY = fallbackKey
+      const crypto = await import('node:crypto')
+      const iv = crypto.randomBytes(16)
+      const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(fallbackKey, 'utf8').subarray(0, 32), iv)
+      const enc = Buffer.concat([cipher.update('sk-legacy-fb-blob', 'utf8'), cipher.final()])
+      const tag = cipher.getAuthTag()
+      const blob = ['fb', iv.toString('base64'), tag.toString('base64'), enc.toString('base64')].join(':')
+      fs.writeFileSync(storePath, JSON.stringify({ legacy: blob }, null, 2), { encoding: 'utf8', mode: 0o600 })
+
+      // Reading must dispatch on the 'fb:' prefix and succeed regardless of
+      // whether DPAPI is currently available on this host.
+      expect(getSecret('legacy')).toBe('sk-legacy-fb-blob')
+
+      delete process.env.OPENOFFICELLM_SECRETS_FALLBACK_KEY
+    })
+  })
+
   it('listConfigured returns IDs only, never values', async () => {
     await withTempSecrets(async () => {
       setSecret('anthropic', 'sk-secret-value-aaa')

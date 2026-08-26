@@ -12,9 +12,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { McpServerConfig, McpTool } from '@openofficellm/shared'
 import { logger } from '../logging.js'
+import { HOST_VERSION } from '../paths.js'
 
 const PROTOCOL_VERSION = '2024-11-05'
-const CLIENT_INFO = { name: 'OpenOfficeLLM', version: '0.1.0' }
+const CLIENT_INFO = { name: 'OpenOfficeLLM', version: HOST_VERSION }
 
 /** Wall-clock cap on any single request. A hung server must not wedge a chat
  *  turn forever — the model gets an error result and can carry on. */

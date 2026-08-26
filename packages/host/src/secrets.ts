@@ -1,100 +1,80 @@
 import fs from 'node:fs'
-import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import process from 'node:process'
+import { execFileSync } from 'node:child_process'
 import { resolveSecretsPath, ensureDirs } from './paths.js'
 import { logger } from './logging.js'
 
-// `require` is available in CJS (the tsup bundle for the SEA binary) and in
-// ESM via tsx (which provides it as an interop). We avoid `createRequire` +
-// `import.meta.url` because the CJS bundle has no `import.meta`.
-const requireModule: NodeRequire =
-  typeof require !== 'undefined' ? require : (eval('require') as NodeRequire)
-
-type DpapiModule = {
-  protectData: (
-    data: Uint8Array,
-    entropy: Uint8Array | null,
-    scope: 'CurrentUser' | 'LocalMachine',
-  ) => Uint8Array
-  unprotectData: (
-    data: Uint8Array,
-    entropy: Uint8Array | null,
-    scope: 'CurrentUser' | 'LocalMachine',
-  ) => Uint8Array
-}
-
-let dpapi: DpapiModule | null | undefined
-let dpapiLoadAttempted = false
-let fallbackMode = false
-
 const FALLBACK_ENV_KEY_ENV = 'OPENOFFICELLM_SECRETS_FALLBACK_KEY'
 
-/**
- * Load win-dpapi. Two paths:
- *
- * 1. Packaged (SEA / installer): the native addon ships as `win-dpapi.node`
- *    next to the host binary. `require()` cannot resolve it inside a SEA, so we
- *    load it explicitly via `process.dlopen` with an absolute path.
- * 2. Dev: normal `require('win-dpapi')`, which resolves through node_modules.
- *
- * If neither path works the caller falls back to AES-256-GCM — see the
- * encrypt/decryptFallback pair below. That keeps the app working when the
- * addon is absent, at the cost of weaker secret protection.
- */
-function loadDpapi(): DpapiModule | null {
-  if (dpapiLoadAttempted) return dpapi ?? null
-  dpapiLoadAttempted = true
+// DPAPI is Windows-only and is invoked through Windows PowerShell (.NET
+// System.Security.Cryptography.ProtectedData). The payload is delivered via
+// stdin only — never on the command line — because process command lines are
+// readable by other users on Windows.
+const DPAPI_PREFIX = 'dpapi:'
+const FB_PREFIX = 'fb:'
 
-  // Packaged layout: <install-dir>/win-dpapi.node next to the host binary.
-  const exeDir = path.dirname(process.execPath)
-  const addonPath = path.join(exeDir, 'win-dpapi.node')
-  if (fs.existsSync(addonPath)) {
-    try {
-      const mod: { exports: DpapiModule } = { exports: {} as DpapiModule }
-      // process.dlopen needs the module object shape that require() would
-      // produce — it writes to mod.exports.
-      process.dlopen(mod, addonPath)
-      if (
-        typeof mod.exports.protectData !== 'function' ||
-        typeof mod.exports.unprotectData !== 'function'
-      ) {
-        throw new Error('win-dpapi.node missing expected functions')
-      }
-      dpapi = mod.exports
-      logger.info({ msg: 'secrets: win-dpapi loaded (packaged)', path: addonPath })
-      return mod.exports
-    } catch (e) {
-      logger.warn({
-        msg: 'win-dpapi.node found but failed to load; falling back',
-        path: addonPath,
-        error: String((e as Error).message ?? e),
-      })
-      dpapi = null
-      fallbackMode = true
-      return null
-    }
+let dpapiProbed = false
+let dpapiAvailable = false
+let fallbackMode = false
+
+/**
+ * Probe DPAPI availability exactly once on Windows by protecting a short
+ * constant string. On any non-Windows platform, or if the probe throws, we
+ * permanently switch to the AES fallback. Subsequent calls return the cached
+ * result.
+ */
+function probeDpapi(): void {
+  if (dpapiProbed) return
+  dpapiProbed = true
+
+  if (process.platform !== 'win32') {
+    dpapiAvailable = false
+    fallbackMode = true
+    logger.info({ msg: 'secrets: non-Windows host; using AES fallback' })
+    return
   }
 
-  // Dev layout: normal require through node_modules.
   try {
-    const mod = requireModule('win-dpapi') as DpapiModule
-    if (typeof mod.protectData !== 'function' || typeof mod.unprotectData !== 'function') {
-      throw new Error('win-dpapi missing expected functions')
-    }
-    dpapi = mod
-    logger.info({ msg: 'secrets: win-dpapi loaded' })
-    return mod
+    // The probe uses a fixed, non-secret string. The result is discarded.
+    const probeB64 = Buffer.from('openofficellm-dpapi-probe', 'utf8').toString('base64')
+    dpapiRun('protect', probeB64)
+    dpapiAvailable = true
+    fallbackMode = false
+    logger.info({ msg: 'secrets: DPAPI available via PowerShell' })
   } catch (e) {
-    dpapi = null
+    dpapiAvailable = false
     fallbackMode = true
     logger.warn({
-      msg: 'win-dpapi unavailable; falling back to env-key encrypted file. API keys will NOT be DPAPI-protected.',
+      msg: 'DPAPI probe failed; falling back to env-key encrypted file. API keys will NOT be DPAPI-protected.',
       error: String((e as Error).message ?? e),
     })
-    return null
   }
+}
+
+/**
+ * Run a DPAPI protect/unprotect operation via Windows PowerShell. The base64
+ * payload is embedded in the script text that is fed to PowerShell over stdin;
+ * it never appears on the command line.
+ */
+function dpapiRun(op: 'protect' | 'unprotect', base64Payload: string): string {
+  const method = op === 'protect' ? 'Protect' : 'Unprotect'
+  const script =
+    `$ErrorActionPreference='Stop'\n` +
+    `Add-Type -AssemblyName System.Security\n` +
+    `$b=[Convert]::FromBase64String('${base64Payload}')\n` +
+    `$r=[System.Security.Cryptography.ProtectedData]::${method}($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
+    `[Convert]::ToBase64String($r)\n`
+
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '-'], {
+    input: script,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 15000,
+    maxBuffer: 8 * 1024 * 1024,
+  })
+  return out.trim()
 }
 
 function getFallbackKey(): Buffer {
@@ -110,23 +90,14 @@ function getFallbackKey(): Buffer {
 }
 
 function encryptDpapi(plaintext: string): string {
-  const mod = loadDpapi()
-  if (mod) {
-    const buf = Buffer.from(plaintext, 'utf8')
-    const enc = mod.protectData(buf, null, 'CurrentUser')
-    return Buffer.from(enc).toString('base64')
-  }
-  return encryptFallback(plaintext)
+  const buf = Buffer.from(plaintext, 'utf8').toString('base64')
+  const enc = dpapiRun('protect', buf)
+  return DPAPI_PREFIX + enc
 }
 
 function decryptDpapi(base64: string): string {
-  const mod = loadDpapi()
-  if (mod) {
-    const buf = Buffer.from(base64, 'base64')
-    const dec = mod.unprotectData(buf, null, 'CurrentUser')
-    return Buffer.from(dec).toString('utf8')
-  }
-  return decryptFallback(base64)
+  const dec = dpapiRun('unprotect', base64)
+  return Buffer.from(dec, 'base64').toString('utf8')
 }
 
 function encryptFallback(plaintext: string): string {
@@ -195,13 +166,30 @@ function writeStore(map: SecretMap): void {
   }
 }
 
+/**
+ * Dispatch decryption based on the stored blob's prefix, never on whether
+ * DPAPI currently works — so an existing 'fb:' secret still decrypts when
+ * DPAPI is available, and a bare-base64 legacy DPAPI blob still decrypts
+ * after the 'dpapi:' prefix was introduced.
+ */
+function decryptBlob(blob: string): string {
+  if (blob.startsWith(FB_PREFIX)) {
+    return decryptFallback(blob)
+  }
+  if (blob.startsWith(DPAPI_PREFIX)) {
+    return decryptDpapi(blob.slice(DPAPI_PREFIX.length))
+  }
+  // Legacy bare-base64 DPAPI blob (pre-prefix). Try DPAPI unprotect.
+  return decryptDpapi(blob)
+}
+
 export function setSecret(providerId: string, key: string): void {
   const id = providerId.trim()
   if (!id) throw new Error('providerId required')
   if (!key) throw new Error('key required')
-  loadDpapi()
+  probeDpapi()
   const map = readStore()
-  map[id] = encryptDpapi(key)
+  map[id] = dpapiAvailable ? encryptDpapi(key) : encryptFallback(key)
   writeStore(map)
 }
 
@@ -212,7 +200,7 @@ export function getSecret(providerId: string): string | null {
   const blob = map[id]
   if (!blob) return null
   try {
-    return decryptDpapi(blob)
+    return decryptBlob(blob)
   } catch (e) {
     logger.error({ msg: 'secret decrypt failed', providerId: id, error: String(e) })
     return null
@@ -235,7 +223,7 @@ export function listConfigured(): string[] {
 }
 
 export function isFallbackMode(): boolean {
-  if (!dpapiLoadAttempted) loadDpapi()
+  if (!dpapiProbed) probeDpapi()
   return fallbackMode
 }
 

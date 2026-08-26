@@ -48,7 +48,7 @@ export const UPDATE_STATE_PATH = path.join(APP_DIR, 'update-state.json')
 export const UPDATE_STAGING_DIR = path.join(CACHE_DIR, 'update-pending')
 
 export const DEFAULT_PORT = 7317
-export const HOST_VERSION = '0.1.0'
+export const HOST_VERSION = '0.1.1'
 export const HOST_INTERFACE = '127.0.0.1' as const
 
 /** GitHub repo that hosts releases. The update feed is the releases/latest API. */

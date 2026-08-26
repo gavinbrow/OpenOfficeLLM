@@ -147,7 +147,7 @@ Node 22 + TypeScript + Hono.
 - **Port selection** — default `7317`, scan upward if taken. The chosen port is templated into both the service config and the manifest at install time.
 - **Static hosting** — serves the built `packages/addin` bundle at `/`.
 - **Local auth** — reject requests whose `Origin` isn't the service's own; issue a per-launch token injected into `taskpane.html` and required on `/api/*`.
-- **Secrets** — Windows DPAPI via `win-dpapi`. `GET /api/providers` returns configured-or-not booleans only.
+- **Secrets** — Windows DPAPI is invoked at runtime through Windows PowerShell using .NET `System.Security.Cryptography.ProtectedData`, with an AES-256-GCM fallback when DPAPI is unavailable (always the case on macOS). `GET /api/providers` returns configured-or-not booleans only.
 
 **API surface**
 

@@ -55,9 +55,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Files]
 ; The SEA binary — self-contained, no Node needed.
 Source: "staging\host.exe"; DestDir: "{app}"; Flags: ignoreversion
-; The native addon for DPAPI secret protection. Optional: if absent the host
-; falls back to AES-256-GCM (see secrets.ts).
-Source: "staging\win-dpapi.node"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; The add-in web bundle — served by the host at https://127.0.0.1:7317/
 Source: "staging\web\*"; DestDir: "{app}\web"; Flags: recursesubdirs ignoreversion
 ; Version file — read by /api/health and the update-check flow.
