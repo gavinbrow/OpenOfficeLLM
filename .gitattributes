@@ -11,3 +11,7 @@
 *.pfx binary
 *.key binary
 *.crt binary
+
+# Shell scripts must keep LF even on Windows checkouts: a CRLF shebang is
+# "/bin/sh", which macOS reports as "bad interpreter: no such file".
+*.sh text eol=lf

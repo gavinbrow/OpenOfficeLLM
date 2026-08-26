@@ -218,6 +218,21 @@ if [ -d "OpenOfficeLLM.app" ]; then
   rsync -a --delete "OpenOfficeLLM.app/" "$APP_DIR/"
   # Re-sign ad-hoc so Gatekeeper/launchd accept the new binary.
   codesign --force --deep --sign - "$APP_DIR"
+  # Strip quarantine, or the update undoes the user's own approval.
+  #
+  # Gatekeeper only evaluates bundles carrying com.apple.quarantine. An app
+  # installed from the downloaded DMG has it, and the user cleared the
+  # resulting "Apple could not verify..." dialog once by hand. rsync syncs the
+  # bundle's CONTENTS into an existing directory, so $APP_DIR keeps its own
+  # quarantine xattr, while codesign above gives the bundle a new cdhash --
+  # which voids the approval that was pinned to the old one. Quarantined again
+  # and unrecognised again, the very next launch re-runs the malware dialog.
+  #
+  # Until the app is Developer ID-signed and notarized (Docs/TODO.md), that
+  # dialog is unavoidable on first install but must not come back on every
+  # update. Removing the attribute here is what makes "you only have to do
+  # this once" true.
+  xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
 fi
 
 # Relaunch via open — the launcher re-runs --install then starts the host.

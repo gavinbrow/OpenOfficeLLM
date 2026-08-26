@@ -237,6 +237,16 @@ case "$DIR" in
     ;;
 esac
 
+# Clear our own quarantine attribute so the Gatekeeper dialog is genuinely a
+# one-time event. Reaching this line means Gatekeeper already let us run --
+# either the user removed the attribute by hand or clicked "Open Anyway" -- so
+# this cannot suppress the first prompt, and is not trying to. What it prevents
+# is the SECOND one: "Open Anyway" pins its approval to the bundle's current
+# cdhash, so the next auto-update re-signs the app, invalidates that approval,
+# and a still-quarantined bundle gets challenged all over again. Dropping the
+# attribute now takes the bundle out of Gatekeeper's scope for good.
+xattr -dr com.apple.quarantine "$DIR/../.." 2>/dev/null || true
+
 "$DIR/openofficellm-host" --install
 exec "$DIR/openofficellm-host" --no-browser
 `
@@ -299,7 +309,7 @@ step('creating DMG', () => {
   // free blocks down to almost nothing.
   const srcMb = Math.ceil(
     Number.parseInt(
-      execFileSync('du', ['-sk', dmgSrc], { encoding: 'utf8' }).trim().split(/s+/)[0],
+      execFileSync('du', ['-sk', dmgSrc], { encoding: 'utf8' }).trim().split(/\s+/)[0],
       10,
     ) / 1024,
   )

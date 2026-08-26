@@ -115,16 +115,41 @@ Then in **Word or Excel** — the steps are identical in both:
 
 ### For end users — macOS
 
-Download `OpenOfficeLLM-<version>-macOS.dmg` from the [releases
-page](https://github.com/openofficellm/OpenOfficeLLM/releases), open it, and
-drag **OpenOfficeLLM** to your **Applications** folder. No Node, no admin
-rights, no terminal.
+**Use the installer script.** It needs a terminal, but it is one line and it
+is the only path that installs without a fight:
 
-> **Gatekeeper:** because the app is ad-hoc signed (not notarized), macOS will
-> say it "cannot be opened because it is from an unidentified developer" on
-> first launch. Right-click (or Control-click) the app and choose **Open**,
-> then **Open** again in the dialog. You only have to do this once. Future
-> versions will be Developer ID-signed and notarized.
+```sh
+curl -fsSL https://raw.githubusercontent.com/gavinbrow/OpenOfficeLLM/main/scripts/install-macos.sh | sh
+```
+
+It downloads the latest release, installs it to `/Applications`, and launches
+it. macOS asks for Touch ID or your password once, to trust the local
+certificate authority — that is the CA prompt, not a security warning.
+
+> **Why not the DMG?** You can still download
+> `OpenOfficeLLM-<version>-macOS.dmg` from the [releases
+> page](https://github.com/gavinbrow/OpenOfficeLLM/releases) and drag the app
+> to Applications, but expect to be blocked. The app is ad-hoc signed and
+> **not notarized**, and Gatekeeper evaluates any bundle carrying the
+> `com.apple.quarantine` attribute that browsers staple onto downloads. On
+> macOS 15 (Sequoia) and later the dialog reads **"Apple could not verify
+> 'OpenOfficeLLM' is free of malware that may harm your Mac"** and offers only
+> *Done* or *Move to Trash* — Sequoia removed the old Control-click → **Open**
+> bypass, so there is no way through the dialog itself.
+>
+> Worse, it does not stay a single dialog. `--install` registers a LaunchAgent
+> with `KeepAlive`, so launchd relaunches the host indefinitely and each
+> attempt re-raises the prompt. A blocked install does not fail quietly; it
+> spams.
+>
+> The script sidesteps all of it because `curl` does not set the quarantine
+> attribute, so the installed bundle is never in Gatekeeper's scope. To rescue
+> a DMG install you already have, run `xattr -dr com.apple.quarantine
+> /Applications/OpenOfficeLLM.app` — or just run the script, which tears down
+> the LaunchAgent first and then replaces the app.
+>
+> This all goes away once the app is Developer ID-signed and notarized, which
+> is tracked in [`Docs/TODO.md`](Docs/TODO.md).
 
 The first launch runs the same provisioning as the Windows installer —
 idempotent, so it also serves as the upgrade path:
