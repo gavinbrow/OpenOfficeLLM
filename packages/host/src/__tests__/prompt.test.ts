@@ -1,12 +1,44 @@
-import { describe, it, expect } from 'vitest'
-import type { ChatRequest, DocumentContext } from '@openofficellm/shared'
-import { buildSystemPrompt, renderContextSection, withSystemPrompt } from '../prompt.js'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { AttachmentRef, ChatRequest, DocumentContext } from '@openofficellm/shared'
+
+// buildAttachmentPayload reaches into the on-disk attachment store (getMeta /
+// getBytes) and the OCR worker (extractTextOcr). Mock the whole barrel so the
+// prompt tests never touch the filesystem or spawn tesseract. renderContextSection
+// and buildSystemPrompt do not import this module, so the existing tests are
+// unaffected by the mock.
+vi.mock('../attachments/index.js', () => ({
+  getMeta: vi.fn(),
+  getBytes: vi.fn(),
+  extractTextOcr: vi.fn(),
+  saveAttachment: vi.fn(),
+  deleteAttachment: vi.fn(),
+  cleanup: vi.fn(),
+}))
+
+import {
+  buildSystemPrompt,
+  renderContextSection,
+  withSystemPrompt,
+  buildAttachmentPayload,
+} from '../prompt.js'
+import { getMeta, getBytes, extractTextOcr } from '../attachments/index.js'
 
 function req(overrides: Partial<ChatRequest> = {}): ChatRequest {
   return {
     messages: [{ role: 'user', content: 'hi' }],
     model: 'ollama/test',
     mode: 'propose',
+    ...overrides,
+  }
+}
+
+function ref(overrides: Partial<AttachmentRef> = {}): AttachmentRef {
+  return {
+    id: 'att-1',
+    fileName: 'notes.txt',
+    kind: 'text',
+    mimeType: 'text/plain',
+    tokenEstimate: 10,
     ...overrides,
   }
 }
@@ -180,5 +212,208 @@ describe('browser host', () => {
   it('points at search_page rather than the read tools when a page is truncated', () => {
     const long: DocumentContext = { host: 'browser', scope: 'page', text: 'x'.repeat(60_000) }
     expect(renderContextSection(long)!).toContain('search_page')
+  })
+})
+
+// An attachment and a live document render with different headers: the model
+// is told "the user attached a file named X" rather than "the user is working
+// in Word", so it does not assume it can edit the attachment the way it can
+// edit the open document.
+describe('renderContextSection (attachment)', () => {
+  it('says the user attached a file when isAttachment and fileName are set', () => {
+    const ctx: DocumentContext = {
+      host: 'word',
+      scope: 'document',
+      text: 'extracted body',
+      fileName: 'report.pdf',
+      isAttachment: true,
+    }
+    const out = renderContextSection(ctx)!
+    expect(out).toContain('user attached a file')
+    expect(out).toContain('report.pdf')
+    expect(out).not.toContain('working in Word')
+    expect(out).toContain('extracted body')
+  })
+
+  it('falls back to the host line when isAttachment is false or undefined', () => {
+    const attachedFalse: DocumentContext = {
+      host: 'word',
+      scope: 'document',
+      text: 'body',
+      fileName: 'ignored.pdf',
+      isAttachment: false,
+    }
+    expect(renderContextSection(attachedFalse)!).toContain('working in Word')
+    expect(renderContextSection(attachedFalse)!).not.toContain('user attached a file')
+
+    const noFlag: DocumentContext = { host: 'word', scope: 'document', text: 'body' }
+    expect(renderContextSection(noFlag)!).toContain('working in Word')
+  })
+
+  it('falls back to the host line when isAttachment is true but fileName is missing', () => {
+    const ctx: DocumentContext = { host: 'word', scope: 'document', text: 'body', isAttachment: true }
+    expect(renderContextSection(ctx)!).toContain('working in Word')
+  })
+})
+
+describe('buildAttachmentPayload', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns null section and empty image blocks when there are no attachments', async () => {
+    const out = await buildAttachmentPayload({ req: req(), visionCapable: true })
+    expect(out.systemSection).toBeNull()
+    expect(out.imageBlocks).toEqual([])
+    expect(getMeta).not.toHaveBeenCalled()
+  })
+
+  it('folds a text attachment into the system section', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-1',
+      fileName: 'notes.txt',
+      mimeType: 'text/plain',
+      kind: 'text',
+      tokenEstimate: 5,
+      text: 'the extracted text',
+      path: '/tmp/att-1/notes.txt',
+    })
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref()] }),
+      visionCapable: false,
+    })
+    expect(out.imageBlocks).toEqual([])
+    expect(out.systemSection).toContain('notes.txt')
+    expect(out.systemSection).toContain('the extracted text')
+  })
+
+  it('returns no image blocks for a text attachment even when vision is available', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-1',
+      fileName: 'notes.txt',
+      mimeType: 'text/plain',
+      kind: 'text',
+      tokenEstimate: 5,
+      text: 'text',
+      path: '/tmp/att-1/notes.txt',
+    })
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref()] }),
+      visionCapable: true,
+    })
+    expect(out.imageBlocks).toEqual([])
+    expect(out.systemSection).toContain('text')
+  })
+
+  it('inlines an image attachment as a vision content block when visionCapable', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-img',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      kind: 'image',
+      tokenEstimate: 0,
+      path: '/tmp/att-img/photo.png',
+    })
+    vi.mocked(getBytes).mockReturnValue({
+      buffer: Buffer.from('binary', 'utf-8'),
+      mimeType: 'image/png',
+    })
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref({ id: 'att-img', fileName: 'photo.png', kind: 'image', mimeType: 'image/png' })] }),
+      visionCapable: true,
+    })
+    expect(out.imageBlocks).toHaveLength(1)
+    const block = out.imageBlocks[0]
+    expect(block.type).toBe('image')
+    if (block.type !== 'image') throw new Error('expected image block')
+    expect(block.mimeType).toBe('image/png')
+    expect(block.data).toBe(Buffer.from('binary', 'utf-8').toString('base64'))
+    expect(out.systemSection).toBeNull()
+    expect(extractTextOcr).not.toHaveBeenCalled()
+  })
+
+  it('OCR-folds an image into the system section when the model is not vision-capable', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-img',
+      fileName: 'scan.png',
+      mimeType: 'image/png',
+      kind: 'image',
+      tokenEstimate: 0,
+      path: '/tmp/att-img/scan.png',
+    })
+    vi.mocked(getBytes).mockReturnValue({ buffer: Buffer.from('px'), mimeType: 'image/png' })
+    vi.mocked(extractTextOcr).mockResolvedValue('ocr result text')
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref({ id: 'att-img', fileName: 'scan.png', kind: 'image', mimeType: 'image/png' })] }),
+      visionCapable: false,
+    })
+    expect(out.imageBlocks).toEqual([])
+    expect(extractTextOcr).toHaveBeenCalledTimes(1)
+    expect(out.systemSection).toContain('scan.png')
+    expect(out.systemSection).toContain('ocr result text')
+  })
+
+  it('notes when OCR finds no text in an image', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-img',
+      fileName: 'blank.png',
+      mimeType: 'image/png',
+      kind: 'image',
+      tokenEstimate: 0,
+      path: '/tmp/blank.png',
+    })
+    vi.mocked(getBytes).mockReturnValue({ buffer: Buffer.from('px'), mimeType: 'image/png' })
+    vi.mocked(extractTextOcr).mockResolvedValue('')
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref({ id: 'att-img', fileName: 'blank.png', kind: 'image', mimeType: 'image/png' })] }),
+      visionCapable: false,
+    })
+    expect(out.systemSection).toContain('no text')
+  })
+
+  it('records an OCR failure as a labeled section rather than throwing', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-img',
+      fileName: 'broken.png',
+      mimeType: 'image/png',
+      kind: 'image',
+      tokenEstimate: 0,
+      path: '/tmp/broken.png',
+    })
+    vi.mocked(getBytes).mockReturnValue({ buffer: Buffer.from('px'), mimeType: 'image/png' })
+    vi.mocked(extractTextOcr).mockRejectedValue(new Error('ocr crash'))
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref({ id: 'att-img', fileName: 'broken.png', kind: 'image', mimeType: 'image/png' })] }),
+      visionCapable: false,
+    })
+    expect(out.systemSection).toContain('OCR failed')
+  })
+
+  it('skips a missing attachment (getMeta returns null) without throwing', async () => {
+    vi.mocked(getMeta).mockReturnValue(null)
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref({ id: 'gone' })] }),
+      visionCapable: true,
+    })
+    expect(out.systemSection).toBeNull()
+    expect(out.imageBlocks).toEqual([])
+    expect(getBytes).not.toHaveBeenCalled()
+  })
+
+  it('skips a text attachment whose meta has no extracted text', async () => {
+    vi.mocked(getMeta).mockReturnValue({
+      id: 'att-1',
+      fileName: 'empty.txt',
+      mimeType: 'text/plain',
+      kind: 'text',
+      tokenEstimate: 0,
+      text: '',
+      path: '/tmp/empty.txt',
+    })
+    const out = await buildAttachmentPayload({
+      req: req({ attachments: [ref({ id: 'att-1', fileName: 'empty.txt' })] }),
+      visionCapable: false,
+    })
+    expect(out.systemSection).toBeNull()
   })
 })

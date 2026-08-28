@@ -5,6 +5,8 @@ import { MessageBubble } from './MessageBubble'
 import { ToolActivity, buildTranscript } from './ToolActivity'
 import { ArrowDownIcon, PlusIcon } from './icons'
 import { EmptyState } from './EmptyState'
+import { textOf } from '../util/content'
+import { handleFileUpload } from '../util/attachments'
 
 const EMPTY_MESSAGES: readonly never[] = []
 
@@ -19,6 +21,46 @@ export function ChatPanel() {
   const [atBottom, setAtBottom] = useState(true)
   const [showJump, setShowJump] = useState(false)
   const scrollPending = useRef(false)
+
+  // Drag-and-drop file attachment. The whole chat pane is the drop target: a
+  // counter tracks enter/leave pairs across nested child elements so a drag
+  // passing over a message bubble doesn't flicker the overlay off and on. Only
+  // real file drags (dataTransfer.types includes 'Files') activate the zone —
+  // text drags inside the pane stay with the browser's default behaviour.
+  const [dragging, setDragging] = useState(false)
+  const dragCounter = useRef(0)
+
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragCounter.current++
+    setDragging(true)
+  }
+  const onDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault() // allow drop
+    e.dataTransfer.dropEffect = 'copy'
+  }
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragCounter.current--
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0
+      setDragging(false)
+    }
+  }
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragCounter.current = 0
+    setDragging(false)
+    const files = Array.from(e.dataTransfer.files ?? [])
+    if (files.length === 0) return
+    // Upload sequentially rather than Promise.all: a batch of large files
+    // would otherwise fire N concurrent multipart uploads at once. Each
+    // handleFileUpload surfaces its own error toast, so a mid-batch failure
+    // doesn't abort the rest.
+    for (const file of files) void handleFileUpload(file)
+  }
 
   const messages = useMemo(() => conv?.messages ?? EMPTY_MESSAGES, [conv])
   const hasMessages = messages.length > 0
@@ -84,16 +126,48 @@ export function ChatPanel() {
 
   if (!hasMessages) {
     return (
-      <div className="flex h-full flex-col">
+      <div
+        className="relative flex h-full flex-col"
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <div className="flex-1 overflow-hidden">
           <EmptyState />
         </div>
+        {dragging && (
+          <div
+            className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center
+              border-2 border-dashed border-accent bg-accent/10 text-sm font-medium text-accent"
+            role="status"
+            aria-label="Drop files to attach"
+          >
+            Drop files to attach
+          </div>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div
+          className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center
+            border-2 border-dashed border-accent bg-accent/10 text-sm font-medium text-accent"
+          role="status"
+          aria-label="Drop files to attach"
+        >
+          Drop files to attach
+        </div>
+      )}
       <div className="flex items-center justify-between border-b border-surface-border px-3 py-1.5">
         <span className="truncate text-xs font-medium text-muted">{conv?.title ?? 'Chat'}</span>
         <button
@@ -163,7 +237,7 @@ function EditBanner({ id, onClose }: { id: string; onClose: () => void }) {
   const editAndResend = useChatStore((s) => s.editAndResend)
   const conv = useChatStore((s) => s.conversations.find((c) => c.id === s.activeId))
   const msg = conv?.messages.find((m) => m.id === id)
-  const [text, setText] = useState(msg?.content ?? '')
+  const [text, setText] = useState(textOf(msg?.content ?? ''))
   if (!msg) return null
   const canResend = text.trim().length > 0
   return (

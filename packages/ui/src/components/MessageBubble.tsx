@@ -4,6 +4,7 @@ import { Markdown } from './Markdown'
 import { CopyIcon, RetryIcon, EditIcon } from './icons'
 import { useChatStore } from '../store/chatStore'
 import { useSettingsStore } from '../store/settingsStore'
+import { textOf } from '../util/content'
 
 // Tool calls and tool results never reach this component: ChatPanel folds them
 // into a collapsed ToolActivity row before rendering. This draws prose only.
@@ -27,7 +28,7 @@ export const MessageBubble = memo(function MessageBubble({ message, streaming, o
 
   const onCopy = async () => {
     try {
-      await navigator.clipboard.writeText(message.content)
+      await navigator.clipboard.writeText(textOf(message.content))
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -50,10 +51,10 @@ export const MessageBubble = memo(function MessageBubble({ message, streaming, o
           <ReasoningBlock text={message.reasoning} streaming={streaming} />
         )}
         {isUser ? (
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          <div className="whitespace-pre-wrap break-words">{textOf(message.content)}</div>
         ) : (
           <Markdown
-            content={message.content || (streaming ? '…' : '')}
+            content={textOf(message.content) || (streaming ? '…' : '')}
             streaming={streaming}
             className="prose-sm max-w-none break-words"
           />
@@ -70,7 +71,7 @@ export const MessageBubble = memo(function MessageBubble({ message, streaming, o
         >
           <CopyIcon size={13} />
         </button>
-        {!isUser && !streaming && message.content && (
+        {!isUser && !streaming && textOf(message.content) && (
           <button
             className="icon-btn h-5 w-5 hover:text-fg"
             onClick={() => void retry(message.id!)}

@@ -15,6 +15,7 @@ import {
 } from './types.js'
 import { fetchWithRetry } from './retry.js'
 import { parseNdjsonStream } from './sse-parser.js'
+import { logger } from '../logging.js'
 
 const DEFAULT_BASE = 'http://127.0.0.1:11434'
 const CAPS: ProviderCapabilities = { tools: true, vision: true, streaming: true }
@@ -87,6 +88,12 @@ export class OllamaAdapter implements ProviderAdapter {
       const localName = m.model ?? m.name ?? 'unknown'
       const caps: ProviderCapabilities = {
         tools: Array.isArray(m.capabilities) && m.capabilities.includes('tools'),
+        // NOTE: Ollama's /api/tags response does not advertise which models
+        // support vision. Until Ollama exposes this, every local model reports
+        // vision:false, which means image attachments to any Ollama model go
+        // through OCR rather than native vision. llava and other vision
+        // models would handle images directly if this flag were accurate —
+        // see TODO for the detection work.
         vision: false,
         streaming: true,
       }
@@ -223,7 +230,32 @@ function buildOllamaChatBody(req: ChatRequest, model: string): Record<string, un
 }
 
 function toOllamaMessage(m: ChatMessage): Record<string, unknown> {
-  const out: Record<string, unknown> = { role: m.role, content: m.content }
+  const out: Record<string, unknown> = { role: m.role }
+  if (typeof m.content === 'string') {
+    out.content = m.content
+  } else {
+    // Ollama carries image bytes out-of-band in an `images` array; the text
+    // blocks are concatenated into a single `content` string. If the
+    // adapter is not vision-capable (the model reported no `vision`
+    // capability in /api/tags), the image blocks are dropped defensively
+    // and a warning is logged — the host's prompt builder should have
+    // OCR'd them already.
+    const textParts: string[] = []
+    const imageParts: string[] = []
+    for (const b of m.content) {
+      if (b.type === 'text') textParts.push(b.text)
+      else imageParts.push(b.data)
+    }
+    if (imageParts.length > 0 && !CAPS.vision) {
+      logger.warn({
+        msg: 'dropping image blocks for non-vision Ollama adapter',
+        imageCount: imageParts.length,
+      })
+      imageParts.length = 0
+    }
+    out.content = textParts.join('')
+    if (imageParts.length > 0) out.images = imageParts
+  }
   if (m.toolCalls && m.toolCalls.length > 0) {
     out.tool_calls = m.toolCalls.map((tc) => ({
       type: 'function',

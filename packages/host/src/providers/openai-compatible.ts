@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatRequest,
+  ContentBlock,
   ModelInfo,
   ProviderCapabilities,
   StreamEvent,
@@ -335,7 +336,7 @@ function buildChatCompletionsBody(
   model: string,
   caps: ProviderCapabilities,
 ): Record<string, unknown> {
-  const messages = req.messages.map(toOpenAiMessage)
+  const messages = req.messages.map((m) => toOpenAiMessage(m, caps.vision))
   const body: Record<string, unknown> = {
     model,
     messages,
@@ -355,8 +356,11 @@ function buildChatCompletionsBody(
   return body
 }
 
-function toOpenAiMessage(m: ChatMessage): Record<string, unknown> {
-  const out: Record<string, unknown> = { role: m.role, content: m.content }
+function toOpenAiMessage(m: ChatMessage, visionCapable: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    role: m.role,
+    content: toOpenAiContent(m.content, visionCapable),
+  }
   if (m.toolCalls && m.toolCalls.length > 0) {
     out.tool_calls = m.toolCalls.map((tc) => ({
       id: tc.id,
@@ -365,6 +369,52 @@ function toOpenAiMessage(m: ChatMessage): Record<string, unknown> {
     }))
   }
   if (m.toolCallId) out.tool_call_id = m.toolCallId
+  return out
+}
+
+/** Translate the provider-neutral `string | ContentBlock[]` content union to
+ *  the OpenAI chat-completions wire shape.
+ *
+ *  - A plain string is returned as-is (OpenAI accepts a string for text-only
+ *    messages).
+ *  - An array maps text blocks to `{type:'text', text}` and image blocks to
+ *    `{type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}}` — but
+ *    only when `visionCapable` is true.
+ *  - If `visionCapable` is false and image blocks are present, they are
+ *    dropped defensively (the prompt builder should have OCR'd them already)
+ *    and a warning is logged. When no image survives, the text blocks are
+ *    concatenated to a plain string so the wire shape matches the
+ *    pre-multimodal text-only path. */
+function toOpenAiContent(content: string | ContentBlock[], visionCapable: boolean): unknown {
+  if (typeof content === 'string') return content
+  const textBlocks: Extract<ContentBlock, { type: 'text' }>[] = []
+  const imageBlocks: Extract<ContentBlock, { type: 'image' }>[] = []
+  for (const b of content) {
+    if (b.type === 'text') textBlocks.push(b)
+    else imageBlocks.push(b)
+  }
+  if (imageBlocks.length === 0) {
+    // No images: keep the text-only path on the wire as a plain string.
+    return textBlocks.map((b) => b.text).join('')
+  }
+  if (!visionCapable) {
+    // Defensive: the prompt builder routes image blocks to vision-capable
+    // models. If they reach a non-vision adapter anyway, drop them rather
+    // than send an `image_url` block the server will reject.
+    logger.warn({
+      msg: 'dropping image blocks for non-vision OpenAI-compatible adapter',
+      imageCount: imageBlocks.length,
+    })
+    return textBlocks.map((b) => b.text).join('')
+  }
+  const out: unknown[] = []
+  for (const b of textBlocks) out.push({ type: 'text', text: b.text })
+  for (const b of imageBlocks) {
+    out.push({
+      type: 'image_url',
+      image_url: { url: `data:${b.mimeType};base64,${b.data}` },
+    })
+  }
   return out
 }
 

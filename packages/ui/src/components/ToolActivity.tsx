@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import type { ChatMessage } from '@openofficellm/shared'
 import { ChevronRightIcon } from './icons'
+import { textOf } from '../util/content'
 
 export interface ToolStep {
   /** The tool call id, or a synthetic one for an orphan result. */
@@ -60,7 +61,7 @@ export function buildTranscript(
       }
       const step = open.steps.find((s) => s.id === msg.toolCallId && s.result === undefined)
       if (step) {
-        step.result = msg.content
+        step.result = textOf(msg.content)
       } else {
         // A result with no matching call still has to be shown — dropping it
         // would hide a tool the model ran.
@@ -68,7 +69,7 @@ export function buildTranscript(
           id: key,
           name: msg.toolName ?? 'tool',
           arguments: '',
-          result: msg.content,
+          result: textOf(msg.content),
         })
       }
       continue
@@ -100,7 +101,7 @@ function hasVisibleBody(
   msg: ChatMessage,
   opts: { showReasoning: boolean; streamingId?: string },
 ): boolean {
-  if (msg.content.trim().length > 0) return true
+  if (textOf(msg.content).trim().length > 0) return true
   if (opts.showReasoning && (msg.reasoning ?? '').trim().length > 0) return true
   // The streaming placeholder: an empty message that has not yet decided
   // whether it is going to answer or call a tool still needs to show that

@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatRequest,
+  ContentBlock,
   ModelInfo,
   ProviderCapabilities,
   StreamEvent,
@@ -21,6 +22,7 @@ import {
   normalizeToolArguments,
   type ToolCallDelta,
 } from './openai-compatible.js'
+import { logger } from '../logging.js'
 
 const CAPS: ProviderCapabilities = { tools: true, vision: true, streaming: true }
 
@@ -175,7 +177,7 @@ function stripProviderPrefix(model: string, providerId: string): string {
 function buildAzureBody(req: ChatRequest): Record<string, unknown> {
   const messages = req.messages.map((m) => ({
     role: m.role,
-    content: m.content,
+    content: toAzureContent(m.content),
     ...(m.toolCalls
       ? {
           tool_calls: m.toolCalls.map((tc) => ({
@@ -197,6 +199,46 @@ function buildAzureBody(req: ChatRequest): Record<string, unknown> {
     }))
   }
   return body
+}
+
+/** Translate the provider-neutral `string | ContentBlock[]` content union to
+ *  the Azure OpenAI (OpenAI-compatible) wire shape.
+ *
+ *  Azure OpenAI speaks the same multimodal dialect as OpenAI: text blocks
+ *  become `{type:'text', text}` and image blocks become
+ *  `{type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}}`. A
+ *  plain string is returned as-is. When the adapter is not vision-capable
+ *  and image blocks are present, they are dropped defensively and a
+ *  warning is logged; the surviving text blocks are concatenated to a
+ *  plain string so the wire shape matches the pre-multimodal text-only
+ *  path. */
+function toAzureContent(content: string | ContentBlock[]): unknown {
+  if (typeof content === 'string') return content
+  const textBlocks: Extract<ContentBlock, { type: 'text' }>[] = []
+  const imageBlocks: Extract<ContentBlock, { type: 'image' }>[] = []
+  for (const b of content) {
+    if (b.type === 'text') textBlocks.push(b)
+    else imageBlocks.push(b)
+  }
+  if (imageBlocks.length === 0) {
+    return textBlocks.map((b) => b.text).join('')
+  }
+  if (!CAPS.vision) {
+    logger.warn({
+      msg: 'dropping image blocks for non-vision Azure OpenAI adapter',
+      imageCount: imageBlocks.length,
+    })
+    return textBlocks.map((b) => b.text).join('')
+  }
+  const out: unknown[] = []
+  for (const b of textBlocks) out.push({ type: 'text', text: b.text })
+  for (const b of imageBlocks) {
+    out.push({
+      type: 'image_url',
+      image_url: { url: `data:${b.mimeType};base64,${b.data}` },
+    })
+  }
+  return out
 }
 
 export { CAPS as AZURE_CAPS }

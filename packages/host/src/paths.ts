@@ -42,6 +42,8 @@ export const CERT_DIR = path.join(APP_DIR, 'certs')
 export const SECRETS_PATH = path.join(APP_DIR, 'secrets.dat')
 export const CACHE_DIR = path.join(APP_DIR, 'cache')
 export const OFFICEJS_CACHE_DIR = path.join(CACHE_DIR, 'officejs')
+export const ATTACHMENTS_DIR = path.join(CACHE_DIR, 'attachments')
+export const TESSERACT_CACHE_DIR = path.join(CACHE_DIR, 'tesseract')
 export const MANIFEST_DIR = path.join(APP_DIR, 'manifest')
 export const SKILLS_DIR = path.join(APP_DIR, 'skills')
 export const UPDATE_STATE_PATH = path.join(APP_DIR, 'update-state.json')
@@ -64,6 +66,8 @@ export function ensureDirs(): void {
     path.join(dir, 'certs'),
     path.join(dir, 'cache'),
     path.join(dir, 'cache', 'officejs'),
+    path.join(dir, 'cache', 'attachments'),
+    path.join(dir, 'cache', 'tesseract'),
     path.join(dir, 'manifest'),
     path.join(dir, 'skills'),
     path.join(dir, 'cache', 'update-pending'),
@@ -102,6 +106,14 @@ export function resolveCertDir(): string {
 
 export function resolveOfficejsCacheDir(): string {
   return path.join(appDir(), 'cache', 'officejs')
+}
+
+export function resolveAttachmentsDir(): string {
+  return path.join(appDir(), 'cache', 'attachments')
+}
+
+export function resolveTesseractCacheDir(): string {
+  return path.join(appDir(), 'cache', 'tesseract')
 }
 
 export function resolveManifestDir(): string {

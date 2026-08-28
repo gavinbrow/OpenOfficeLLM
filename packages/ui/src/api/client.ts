@@ -338,6 +338,76 @@ export function callMcpTool(tool: string, args: Record<string, unknown>): Promis
   return jsonRequest<McpCallResponse>('POST', '/api/mcp/call', { tool, arguments: args })
 }
 
+// ─── Attachments ─────────────────────────────────────────────────────────
+
+/** Response from POST /api/attachments for a single file. */
+export interface AttachmentUploadResult {
+  id: string
+  fileName: string
+  kind: 'text' | 'image'
+  mimeType: string
+  tokenEstimate: number
+}
+
+export interface AttachmentsResponse {
+  attachments: AttachmentUploadResult[]
+  /** Per-file failures from a multi-file batch. The client sends one file per
+   *  request (the UI loops file-by-file), so this has 0 or 1 entries in
+   *  practice, but the host handles the batch case and reports each failure. */
+  errors?: { fileName: string; message: string }[]
+}
+
+/** Upload a file to the host. Returns the attachment ref the pane holds in
+ *  its context store. Multipart/form-data, so Content-Type is set by the
+ *  browser — do NOT set it manually (authHeaders() would pin it to
+ *  application/json and strip the boundary, so we build the header set from
+ *  baseHeaders() + Authorization instead). */
+export async function uploadAttachment(file: File): Promise<AttachmentUploadResult> {
+  const form = new FormData()
+  form.append('files', file)
+  let res: Response
+  try {
+    res = await fetch(apiUrl('/api/attachments'), {
+      method: 'POST',
+      headers: {
+        ...baseHeaders(),
+        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+      },
+      body: form,
+    })
+  } catch (e) {
+    const err: ApiError = {
+      code: 'network',
+      message: (e as Error).message ?? 'network error',
+      retryable: true,
+    }
+    throw err
+  }
+  if (!res.ok) {
+    const apiErr = await parseError(res)
+    throw apiErr
+  }
+  const body = (await res.json()) as AttachmentsResponse
+  // The host returns an array even for a single file; take the first. When the
+  // single file failed extraction (unsupported type, parse error), the host
+  // returns no attachments and surfaces the per-file failure in `errors`.
+  if (!body.attachments || body.attachments.length === 0) {
+    const errMsg = body.errors?.[0]?.message ?? 'no attachment returned'
+    throw { code: 'server_error', message: errMsg } as ApiError
+  }
+  return body.attachments[0]
+}
+
+/** Delete an attachment on the host (when the user removes the chip). */
+export async function deleteAttachment(id: string): Promise<void> {
+  await jsonRequest<{ ok: boolean }>('DELETE', `/api/attachments/${encodeURIComponent(id)}`)
+}
+
+/** Absolute URL to fetch an attachment's bytes (for image thumbnails). */
+export function attachmentUrl(id: string): string {
+  return apiUrl(`/api/attachments/${encodeURIComponent(id)}`)
+}
+
 export class ClientError extends Error {
   code: string
   retryable?: boolean

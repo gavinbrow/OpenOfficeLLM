@@ -17,8 +17,13 @@
   "dependencies": {
     "@hono/node-server": "^1.14.1",
     "@openofficellm/shared": "^0.1.0",
+    "exceljs": "^4.4.0",
     "hono": "^4.7.10",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.8.0",
     "node-forge": "^1.3.1",
+    "pdfjs-dist": "^6.2.108",
+    "tesseract.js": "^5.1.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

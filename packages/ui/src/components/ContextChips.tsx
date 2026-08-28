@@ -11,7 +11,7 @@ import { useContextStore } from '../store/contextStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { getHost, getAdapter, settingsHost } from '../host/bridge'
 import { SCOPES_FOR_HOST } from '../host/adapter'
-import { CloseIcon, RefreshIcon } from './icons'
+import { CloseIcon, RefreshIcon, FileIcon } from './icons'
 
 const SCOPE_LABEL: Record<ContextScope, string> = {
   none: 'Nothing',
@@ -26,6 +26,7 @@ const SCOPE_LABEL: Record<ContextScope, string> = {
 export function ContextChips() {
   const items = useContextStore((s) => s.items)
   const remove = useContextStore((s) => s.remove)
+  const removeAttachment = useContextStore((s) => s.removeAttachment)
   const settings = useSettingsStore((s) => s.settings)
   const save = useSettingsStore((s) => s.save)
 
@@ -142,23 +143,34 @@ export function ContextChips() {
         </>
       )}
 
-      {items.map((item) => (
-        <span
-          key={item.id}
-          className="chip"
-          title={`${item.scope} · ~${item.tokenEstimate} tokens`}
-        >
-          <span className="max-w-[160px] truncate">{item.label}</span>
-          <span className="text-[0.6rem] text-faint">·{item.tokenEstimate}t</span>
-          <button
-            className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-surface-border"
-            onClick={() => remove(item.id)}
-            aria-label={`Remove ${item.label} from context`}
+      {items.map((item) => {
+        const isAttachment =
+          item.kind === 'text-attachment' || item.kind === 'image-attachment'
+        return (
+          <span
+            key={item.id}
+            className="chip"
+            title={
+              isAttachment
+                ? `${item.kind === 'image-attachment' ? 'Image' : 'File'}: ${item.label} · ~${item.tokenEstimate} tokens`
+                : `${item.scope} · ~${item.tokenEstimate} tokens`
+            }
           >
-            <CloseIcon size={10} />
-          </button>
-        </span>
-      ))}
+            {isAttachment && <FileIcon size={11} />}
+            <span className="max-w-[160px] truncate">{item.label}</span>
+            <span className="text-[0.6rem] text-faint">·{item.tokenEstimate}t</span>
+            <button
+              className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-surface-border"
+              onClick={() =>
+                isAttachment ? void removeAttachment(item.id) : remove(item.id)
+              }
+              aria-label={`Remove ${item.label} from context`}
+            >
+              <CloseIcon size={10} />
+            </button>
+          </span>
+        )
+      })}
     </div>
   )
 }

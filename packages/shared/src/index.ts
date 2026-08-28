@@ -8,9 +8,19 @@
 
 export type UserRole = 'user' | 'assistant' | 'system' | 'tool'
 
+/** A typed content block. Text messages use a plain `string`; multimodal
+ *  messages (vision) use an array of these blocks. Every provider adapter
+ *  translates from this shape to its native multimodal format. */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mimeType: string; data: string }
+
 export interface ChatMessage {
   role: UserRole
-  content: string
+  /** Message content. A plain `string` is the common case; `ContentBlock[]`
+   *  is used when a turn carries image attachments (vision), and providers
+   *  translate it to their native multimodal format. */
+  content: string | ContentBlock[]
   /** Chain-of-thought the model emitted alongside `content`. Kept separate so
    *  it never renders as the answer, and never goes back upstream on the next
    *  turn — reasoning is a per-turn artifact, not conversation history. */
@@ -86,6 +96,10 @@ export interface ChatRequest {
   mode: EditMode
   /** What the user has chosen to include as document context for this turn. */
   context?: DocumentContext
+  /** Files the user attached for this turn. The host resolves these to
+   *  extracted text (folded into the system prompt) or image content blocks
+   *  (inlined into the first user message for vision-capable models). */
+  attachments?: AttachmentRef[]
   /** Tools the model is allowed to call this turn. The pane sends the document
    *  tool catalog for the active host; the host service unions in the MCP tools
    *  the user has enabled. */
@@ -176,6 +190,34 @@ export interface DocumentContext {
   /** Approximate token count the host computed for this context, for the
    *  ContextChips UI. */
   tokenEstimate?: number
+  /** Original filename when this context came from a user-attached file,
+   *  not the live document. The prompt builder uses this to phrase the
+   *  context header as "the user attached a file" rather than "the current
+   *  document context". */
+  fileName?: string
+  /** True when this context was built from an attachment rather than read
+   *  from the live document. */
+  isAttachment?: boolean
+}
+
+/** Whether an attachment contributes text or image content to the turn. */
+export type AttachmentKind = 'text' | 'image'
+
+/** Reference to a file the user attached for this turn. The pane sends only
+ *  the ref; the host holds the actual bytes and extracted text, so the wire
+ *  payload stays small even for large files. */
+export interface AttachmentRef {
+  /** Host-assigned attachment id. */
+  id: string
+  /** Original filename, for display in chips and the prompt. */
+  fileName: string
+  /** Whether this attachment contributes text or an image. */
+  kind: AttachmentKind
+  /** MIME type of the source file. */
+  mimeType: string
+  /** Approximate token count of the extracted text (text attachments) or
+   *  0 for image attachments forwarded as vision blocks. */
+  tokenEstimate: number
 }
 
 export interface ColumnSchema {

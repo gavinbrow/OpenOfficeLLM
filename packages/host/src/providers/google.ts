@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatRequest,
+  ContentBlock,
   ModelInfo,
   ProviderCapabilities,
   StreamEvent,
@@ -18,6 +19,7 @@ import {
 import { fetchWithRetry } from './retry.js'
 import { parseSseStream } from './sse-parser.js'
 import { estimateCost } from './pricing.js'
+import { logger } from '../logging.js'
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta'
 const CAPS: ProviderCapabilities = { tools: true, vision: true, streaming: true }
@@ -211,9 +213,12 @@ function stripProviderPrefix(model: string, providerId: string): string {
 }
 
 function buildGeminiBody(req: ChatRequest): Record<string, unknown> {
+  // System prompts are text-only on the Gemini wire; concatenate every
+  // system message's content as text. A system turn carrying image blocks
+  // is not a meaningful shape, so blocks are flattened to text.
   const systemText = req.messages
     .filter((m) => m.role === 'system')
-    .map((m) => m.content)
+    .map((m) => textOf(m.content))
     .concat(req.systemPrompt ? [req.systemPrompt] : [])
     .join('\n\n')
   const contents = req.messages.filter((m) => m.role !== 'system').map(toGeminiContent)
@@ -237,19 +242,57 @@ function buildGeminiBody(req: ChatRequest): Record<string, unknown> {
   return body
 }
 
+/** Flatten a message's content into a single string, ignoring image
+ *  blocks. Used for system-instruction assembly, which is text-only. */
+function textOf(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content
+  return content
+    .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+}
+
 function toGeminiContent(m: ChatMessage): Record<string, unknown> {
   const role = m.role === 'assistant' ? 'model' : m.role === 'tool' ? 'user' : m.role
+  if (m.role === 'tool' && m.toolCallId) {
+    // Tool results carry their text as the function response; image blocks
+    // are not meaningful here, so flatten to text.
+    return {
+      role: 'user',
+      parts: [{ functionResponse: { name: m.toolCallId, response: { result: textOf(m.content) } } }],
+    }
+  }
   const parts: unknown[] = []
-  if (m.content) parts.push({ text: m.content })
+  if (typeof m.content === 'string') {
+    if (m.content) parts.push({ text: m.content })
+  } else {
+    // Gemini's multimodal shape is a `parts` array: text blocks become
+    // `{text}` and image blocks become
+    // `{inline_data:{mime_type, data}}`. If the adapter is not
+    // vision-capable and image blocks are present, they are dropped
+    // defensively (the prompt builder should have OCR'd them) and a
+    // warning is logged; surviving text blocks become `{text}` parts.
+    const textBlocks: Extract<ContentBlock, { type: 'text' }>[] = []
+    const imageBlocks: Extract<ContentBlock, { type: 'image' }>[] = []
+    for (const b of m.content) {
+      if (b.type === 'text') textBlocks.push(b)
+      else imageBlocks.push(b)
+    }
+    if (imageBlocks.length > 0 && !CAPS.vision) {
+      logger.warn({
+        msg: 'dropping image blocks for non-vision Google adapter',
+        imageCount: imageBlocks.length,
+      })
+      imageBlocks.length = 0
+    }
+    for (const b of textBlocks) parts.push({ text: b.text })
+    for (const b of imageBlocks) {
+      parts.push({ inline_data: { mime_type: b.mimeType, data: b.data } })
+    }
+  }
   if (m.toolCalls) {
     for (const tc of m.toolCalls) {
       parts.push({ functionCall: { name: tc.name, args: safeParseArgs(tc.arguments) } })
-    }
-  }
-  if (m.role === 'tool' && m.toolCallId) {
-    return {
-      role: 'user',
-      parts: [{ functionResponse: { name: m.toolCallId, response: { result: m.content } } }],
     }
   }
   return { role, parts }

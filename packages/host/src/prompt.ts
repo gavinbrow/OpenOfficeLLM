@@ -5,7 +5,9 @@
 // model was told nothing about the document, so "what is in this document"
 // truthfully answered that no document had been provided.
 
-import type { ChatMessage, ChatRequest, DocumentContext, EditMode } from '@openofficellm/shared'
+import type { ChatMessage, ChatRequest, ContentBlock, DocumentContext, EditMode } from '@openofficellm/shared'
+import { getMeta, getBytes, extractTextOcr } from './attachments/index.js'
+import { logger } from './logging.js'
 
 const MODE_GUIDANCE: Record<EditMode, string> = {
   propose: [
@@ -75,6 +77,20 @@ function truncate(text: string, limit = MAX_CONTEXT_CHARS): { text: string; trun
   return { text: `${text.slice(0, limit)}\n…[truncated]`, truncated: true }
 }
 
+/** Flatten a message's content to a plain string, regardless of whether it
+ *  arrived as a string or as typed content blocks. Image blocks contribute
+ *  nothing to flat text (their content is the image bytes, which have no
+ *  text representation here) — only text blocks are joined. Used where the
+ *  system-prompt assembly needs a string: inheriting caller system messages,
+ *  and anywhere else that historically assumed `content: string`. */
+function textOf(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content
+  return content
+    .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+}
+
 function describeScope(ctx: DocumentContext): string {
   switch (ctx.scope) {
     case 'selection':
@@ -111,9 +127,11 @@ export function renderContextSection(ctx: DocumentContext | undefined): string |
   const parts: string[] = []
   const appName = ctx.host === 'excel' ? 'Excel' : 'Word'
   parts.push(
-    ctx.host === 'browser'
-      ? `The user is reading a web page. The following is ${describeScope(ctx)}, captured just now.`
-      : `The user is working in ${appName}. The following is ${describeScope(ctx)}, captured just now.`,
+    ctx.isAttachment && ctx.fileName
+      ? `The user attached a file "${ctx.fileName}". The following is its contents, extracted just now.`
+      : ctx.host === 'browser'
+        ? `The user is reading a web page. The following is ${describeScope(ctx)}, captured just now.`
+        : `The user is working in ${appName}. The following is ${describeScope(ctx)}, captured just now.`,
   )
 
   if (hasOutline) {
@@ -166,6 +184,9 @@ export interface BuildPromptOptions {
   skillPrompt?: string
   /** True if the turn was given any tools at all. */
   hasTools: boolean
+  /** Rendered text from file attachments, appended to the system prompt
+   *  after the skill section and before the document context section. */
+  attachmentSection?: string | null
 }
 
 /**
@@ -175,7 +196,7 @@ export interface BuildPromptOptions {
  * system prompt more reliably than its middle.
  */
 export function buildSystemPrompt(opts: BuildPromptOptions): string {
-  const { req, skillPrompt, hasTools } = opts
+  const { req, skillPrompt, hasTools, attachmentSection } = opts
   const browser = req.context?.host === 'browser'
   const sections: string[] = [browser ? BROWSER_IDENTITY : BASE_IDENTITY, ANSWER_STYLE]
 
@@ -209,6 +230,7 @@ export function buildSystemPrompt(opts: BuildPromptOptions): string {
 
   if (skillPrompt && skillPrompt.trim()) sections.push(skillPrompt.trim())
   if (req.systemPrompt && req.systemPrompt.trim()) sections.push(req.systemPrompt.trim())
+  if (attachmentSection) sections.push(attachmentSection)
 
   const ctxSection = renderContextSection(req.context)
   if (ctxSection) sections.push(ctxSection)
@@ -228,7 +250,7 @@ export function buildSystemPrompt(opts: BuildPromptOptions): string {
 export function withSystemPrompt(req: ChatRequest, systemPrompt: string): ChatMessage[] {
   const inherited = req.messages
     .filter((m) => m.role === 'system')
-    .map((m) => m.content)
+    .map((m) => textOf(m.content))
     .filter((c) => c.trim().length > 0)
 
   const combined = [systemPrompt, ...inherited].filter(Boolean).join('\n\n')
@@ -237,4 +259,102 @@ export function withSystemPrompt(req: ChatRequest, systemPrompt: string): ChatMe
     .map(({ reasoning: _reasoning, ...m }) => m)
 
   return combined ? [{ role: 'system', content: combined }, ...rest] : rest
+}
+
+export interface AttachmentPayload {
+  /** Text from text attachments and OCR'd images, rendered as a system-prompt
+   *  section. Null when there are no text-contributing attachments. */
+  systemSection: string | null
+  /** Image content blocks for vision-capable models. Empty when the model
+   *  can't take images, or when there are no image attachments. */
+  imageBlocks: ContentBlock[]
+}
+
+interface BuildAttachmentOptions {
+  req: ChatRequest
+  /** True if the resolved model can accept image content blocks. When false,
+   *  image attachments are OCR'd into text instead. */
+  visionCapable: boolean
+}
+
+/**
+ * Resolve the attachments on a ChatRequest into prompt material.
+ *
+ * Text attachments are read from the host's attachment store and rendered into
+ * a single system-prompt section. Image attachments are either returned as
+ * content blocks (for vision-capable models) or run through OCR and folded
+ * into the same system-prompt section as text attachments.
+ *
+ * Called by the chat route after `buildSystemPrompt` so the attachment section
+ * can be appended to the system prompt, and before `withSystemPrompt` so
+ * image blocks can be injected into the first user message.
+ */
+export async function buildAttachmentPayload(opts: BuildAttachmentOptions): Promise<AttachmentPayload> {
+  const { req, visionCapable } = opts
+  const refs = req.attachments ?? []
+  if (refs.length === 0) return { systemSection: null, imageBlocks: [] }
+
+  const textSections: string[] = []
+  const imageBlocks: ContentBlock[] = []
+
+  for (const ref of refs) {
+    const meta = getMeta(ref.id)
+    if (!meta) {
+      // The attachment was deleted or the host restarted. Skip it rather than
+      // failing the whole turn — a missing attachment is not a reason to
+      // refuse to answer.
+      logger.warn({ msg: 'attachment not found', id: ref.id, fileName: ref.fileName })
+      continue
+    }
+
+    if (meta.kind === 'image') {
+      // Use the host's classified kind, not the client's ref.kind — the host
+      // inspected the actual file bytes at upload time, while ref.kind is just
+      // a label the pane forwarded. A stale or mislabeled client ref would
+      // otherwise route an image through the text branch and drop it (images
+      // have no meta.text), or push text through the vision branch.
+      if (visionCapable) {
+        const bytes = getBytes(ref.id)
+        if (bytes) {
+          imageBlocks.push({
+            type: 'image',
+            mimeType: meta.mimeType,
+            data: bytes.buffer.toString('base64'),
+          })
+        }
+      } else {
+        // Non-vision model: OCR the image and fold the text into the system
+        // prompt. This is the "OCR skill" path — the user gets text either way.
+        const bytes = getBytes(ref.id)
+        if (bytes) {
+          try {
+            const ocrText = await extractTextOcr(bytes.buffer, meta.mimeType)
+            if (ocrText.trim()) {
+              textSections.push(renderAttachmentFileSection(ref.fileName, ocrText))
+            } else {
+              textSections.push(renderAttachmentFileSection(ref.fileName, '(OCR found no text in this image.)'))
+            }
+          } catch (e) {
+            logger.warn({ msg: 'ocr failed', id: ref.id, error: String((e as Error).message ?? e) })
+            textSections.push(renderAttachmentFileSection(ref.fileName, '(OCR failed on this image.)'))
+          }
+        }
+      }
+    } else {
+      // Text attachment: use the extracted text stored on the meta.
+      if (meta.text) {
+        textSections.push(renderAttachmentFileSection(ref.fileName, meta.text))
+      }
+    }
+  }
+
+  const systemSection = textSections.length > 0 ? textSections.join('\n\n') : null
+  return { systemSection, imageBlocks }
+}
+
+/** Render a single attachment's text as a labeled section. */
+function renderAttachmentFileSection(fileName: string, text: string): string {
+  const { text: truncated, truncated: didTruncate } = truncate(text)
+  const header = `## Attached file: ${fileName}${didTruncate ? ' (truncated)' : ''}`
+  return `${header}\n\`\`\`text\n${truncated}\n\`\`\``
 }

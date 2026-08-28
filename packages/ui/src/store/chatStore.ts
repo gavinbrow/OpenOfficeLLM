@@ -9,7 +9,9 @@
 
 import { create } from 'zustand'
 import type {
+  AttachmentRef,
   ChatMessage,
+  ContentBlock,
   DocumentContext,
   EditMode,
   StreamEvent,
@@ -24,6 +26,18 @@ import { useSettingsStore } from './settingsStore'
 import { useContextStore } from './contextStore'
 import { useProposalStore } from './proposalStore'
 import { getHost, getAdapter, getDocumentKey, settingsHost, shell } from '../host/bridge'
+
+/** Flatten message content to a string. The pane only ever produces string
+ *  content — image content blocks are created host-side — so this is a
+ *  defensive narrowing for places that historically assumed `content: string`
+ *  (titles, logging, tool-result assembly). */
+function textOf(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content
+  return content
+    .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+}
 
 export interface Conversation {
   id: string
@@ -157,6 +171,13 @@ async function gatherContext(): Promise<DocumentContext | undefined> {
   }
 }
 
+/** Collect attachment refs for the turn. Unlike `gatherContext`, attachments
+ *  have no auto-attach fallback — if the user dropped files, the chips are in
+ *  the store; if not, the list is empty. */
+function gatherAttachments(): AttachmentRef[] {
+  return useContextStore.getState().toAttachments()
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: loadPersisted<Conversation[]>(
     SESSION_KEY,
@@ -246,6 +267,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const mode = resolveMode(opts?.mode)
     const context = await gatherContext()
+    const attachments = gatherAttachments()
 
     // A new turn supersedes anything staged by the previous one. Leaving stale
     // proposals visible invites applying an edit the user has since talked the
@@ -284,6 +306,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       model: modelId,
       mode,
       context,
+      attachments,
       skillId: opts?.skillId,
       agentId: opts?.agentId,
     })
@@ -329,6 +352,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const mode = resolveMode()
     const context = await gatherContext()
+    // Attachments are read live from the store, so a retry sends whatever chips
+    // are currently attached — not what was attached on the original send. If
+    // the user removed a file before retrying, it isn't re-sent.
+    const attachments = gatherAttachments()
     useProposalStore.getState().discardAll()
 
     const updatedConv: Conversation = { ...conv, messages: prior, updatedAt: nowMs() }
@@ -349,6 +376,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       model: modelId,
       mode,
       context,
+      attachments,
     })
   },
 
@@ -373,6 +401,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const history = [...truncated, edited]
     const mode = resolveMode()
     const context = await gatherContext()
+    // Same live-read as retry: a chip the user removed before resending the
+    // edit isn't re-sent.
+    const attachments = gatherAttachments()
     useProposalStore.getState().discardAll()
 
     const updatedConv: Conversation = { ...conv, messages: history, updatedAt: nowMs() }
@@ -393,6 +424,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       model: modelId,
       mode,
       context,
+      attachments,
     })
   },
 
@@ -414,6 +446,10 @@ interface TurnOptions {
   model: string
   mode: EditMode
   context?: DocumentContext
+  /** Attachment refs for this turn — text/image files the user dropped onto
+   *  the composer. Only round 0 carries them; later rounds would multiply the
+   *  payload and the model already has the content in history. */
+  attachments?: AttachmentRef[]
   skillId?: string
   agentId?: string
 }
@@ -462,7 +498,7 @@ function updateMessage(
  */
 async function runAgentLoop(set: SetState, get: GetState, opts: TurnOptions): Promise<void> {
   const myGeneration = ++streamGeneration
-  const { conversationId, model, mode, context, skillId, agentId } = opts
+  const { conversationId, model, mode, context, attachments, skillId, agentId } = opts
 
   const settings = useSettingsStore.getState().settings
   const agent = agentId ? settings.agents.find((a) => a.id === agentId && a.enabled) : undefined
@@ -509,6 +545,10 @@ async function runAgentLoop(set: SetState, get: GetState, opts: TurnOptions): Pr
         mode: effectiveMode,
         skillId: round === 0 ? skillId : undefined,
         tools: tools.length > 0 ? tools : undefined,
+        // Same round-0-only logic as `context`: re-sending attachments every
+        // round would multiply the payload, and the model already has them in
+        // history.
+        attachments: round === 0 ? attachments : undefined,
       })
 
       if (result.aborted) return
@@ -581,6 +621,7 @@ async function runOneRound(
     context?: DocumentContext
     skillId?: string
     tools?: ToolDefinition[]
+    attachments?: AttachmentRef[]
   },
 ): Promise<RoundResult> {
   const wire = {
@@ -624,7 +665,10 @@ async function runOneRound(
         content += streamEv.text
         updateMessage(set, conversationId, assistantId, (m) => ({
           ...m,
-          content: m.content + streamEv.text,
+          // The pane only ever streams text deltas into `content`; image
+          // blocks are host-side, so this narrows defensively to keep the
+          // accumulator a string.
+          content: textOf(m.content) + streamEv.text,
         }))
         break
       case 'reasoning':
@@ -676,7 +720,7 @@ async function runOneRound(
             },
           })
           updateMessage(set, conversationId, assistantId, (m) =>
-            m.content.length === 0 ? { ...m, content: `⚠️ ${streamEv.message}` } : m,
+            textOf(m.content).length === 0 ? { ...m, content: `⚠️ ${streamEv.message}` } : m,
           )
           activeStream = null
         }

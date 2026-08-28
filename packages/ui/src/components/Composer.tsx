@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '../store/chatStore'
-import { SendIcon, StopIcon } from './icons'
+import { SendIcon, StopIcon, PaperclipIcon } from './icons'
 import { ModelSelector } from './ModelSelector'
 import { ModeToggle } from './ModeToggle'
 import { AgentSelector } from './AgentSelector'
 import { estimateTokens } from '../util/tokens'
+import { handleFileUpload } from '../util/attachments'
 
 // The pane is ~320px wide. Anything placed *beside* the textarea comes straight
 // out of the typing area, and with a model button, a mode button and a send
@@ -78,6 +79,28 @@ export function Composer() {
         />
 
         <div className="flex items-center gap-1 px-1.5 pb-1.5">
+          {/* Paperclip attaches files via a hidden multi-file input. A <label>
+              wrapper is used instead of a <button> so the native file picker
+              opens on click without the extra wiring a button+ref would need.
+              The input resets its value after each pick so the same file can be
+              attached twice in a row. */}
+          <label
+            className="btn btn-ghost h-8 w-8 shrink-0 cursor-pointer"
+            title="Attach files"
+            aria-label="Attach files"
+          >
+            <PaperclipIcon size={15} />
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                e.target.value = '' // reset so the same file can be picked again
+                for (const file of files) void handleFileUpload(file)
+              }}
+            />
+          </label>
           <AgentSelector activeId={activeAgentId} onSelect={setActiveAgentId} />
           <ModelSelector compact />
           <span className="h-4 w-px shrink-0 bg-surface-border" aria-hidden />

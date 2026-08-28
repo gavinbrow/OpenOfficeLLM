@@ -76,4 +76,18 @@ describe('Composer', () => {
     await user.type(ta, 'abcdefgh') // 8 chars -> 2 tokens
     expect(screen.getByText(/≈ 2 tokens/)).toBeInTheDocument()
   })
+
+  it('renders a paperclip button with an accessible Attach files label', () => {
+    render(<Composer />)
+    expect(screen.getByLabelText('Attach files')).toBeInTheDocument()
+  })
+
+  it('has a hidden file input behind the paperclip button', () => {
+    render(<Composer />)
+    const input = screen.getByLabelText('Attach files').querySelector('input[type="file"]')
+    expect(input).not.toBeNull()
+    expect(input).toHaveAttribute('type', 'file')
+    // Multiple is set so the user can attach more than one file at a time.
+    expect(input).toHaveAttribute('multiple')
+  })
 })

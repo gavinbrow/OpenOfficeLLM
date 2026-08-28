@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { Context } from 'hono'
 import { serve } from '@hono/node-server'
-import { DEFAULT_PORT, HOST_INTERFACE, HOST_VERSION, ensureDirs } from './paths.js'
+import { DEFAULT_PORT, HOST_INTERFACE, HOST_VERSION, ensureDirs, ATTACHMENTS_DIR } from './paths.js'
 import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate } from './update.js'
 import { z } from 'zod'
 import {
@@ -34,7 +34,7 @@ import { GoogleAdapter } from './providers/google.js'
 import { discoverProviders, startDiscoveryLoop, stopDiscoveryLoop } from './providers/discovery.js'
 import { listAllModels, bustModelCache, resolveProviderForModel } from './models-cache.js'
 import { newRequest, cancelRequest, completeRequest, wrapStream } from './chat-sessions.js'
-import { buildSystemPrompt, withSystemPrompt } from './prompt.js'
+import { buildSystemPrompt, withSystemPrompt, buildAttachmentPayload } from './prompt.js'
 import { splitReasoning } from './providers/reasoning.js'
 import {
   getSkills,
@@ -52,13 +52,23 @@ import {
 } from './mcp/registry.js'
 import { importFromOpencode } from './opencode-import.js'
 import {
+  saveAttachment,
+  getMeta,
+  getBytes,
+  deleteAttachment,
+  cleanup as cleanupAttachments,
+  extractText,
+} from './attachments/index.js'
+import {
   type ChatRequest,
+  type ContentBlock,
   type HealthResponse,
   type HostKind,
   type ProviderInfo,
   type Skill,
   type StreamEvent,
   type ToolDefinition,
+  type AttachmentRef,
 } from '@openofficellm/shared'
 import { ProviderError } from './providers/types.js'
 
@@ -234,6 +244,11 @@ export async function startServer(
   hooks: { onShutdown?: () => void } = {},
 ): Promise<() => Promise<void>> {
   ensureDirs()
+  // Wipe leftover attachments from a previous session. Attachments are
+  // ephemeral by design — session-scoped — so anything still on disk when
+  // the host starts is from a crashed or killed previous run.
+  cleanupAttachments()
+  logger.info({ msg: 'attachment store ready', dir: ATTACHMENTS_DIR })
   const cfg = loadConfig()
   const portSelection = await selectPort(opts.port || cfg.port || DEFAULT_PORT)
   if (portSelection.port !== cfg.port) {
@@ -411,12 +426,48 @@ export async function startServer(
       const tools = [...paneTools, ...mcpTools]
       reqBody.tools = tools.length > 0 ? tools : undefined
 
+      // Resolve attachments: text → system-prompt section, image → content
+      // blocks (vision model) or OCR'd text (non-vision model). The payload
+      // is built before `buildSystemPrompt` so the attachment text section
+      // can be appended to the system prompt, and before
+      // `withSystemPrompt` so image blocks can be injected into the first
+      // user message.
+      const attachmentPayload = await buildAttachmentPayload({
+        req: reqBody,
+        visionCapable: provider.capabilities.vision,
+      })
+
       const systemPrompt = buildSystemPrompt({
         req: reqBody,
         skillPrompt: skill?.prompt,
         hasTools: tools.length > 0,
+        attachmentSection: attachmentPayload.systemSection,
       })
       reqBody.messages = withSystemPrompt(reqBody, systemPrompt)
+
+      // If attachments produced image content blocks (vision model), prepend
+      // them to the first user message. Multimodal providers expect image
+      // blocks inline with user text, not in the system prompt.
+      if (attachmentPayload.imageBlocks.length > 0) {
+        const firstUserIdx = reqBody.messages.findIndex((m) => m.role === 'user')
+        if (firstUserIdx >= 0) {
+          const firstUser = reqBody.messages[firstUserIdx]
+          const existingText =
+            typeof firstUser.content === 'string'
+              ? firstUser.content
+              : firstUser.content
+                  .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+                  .map((b) => b.text)
+                  .join('')
+          reqBody.messages[firstUserIdx] = {
+            ...firstUser,
+            content: [
+              ...attachmentPayload.imageBlocks,
+              { type: 'text' as const, text: existingText },
+            ],
+          }
+        }
+      }
 
       // Forward client-disconnect to the upstream provider fetch. Hono's
       // streamSSE does not wire c.req.raw.signal to the AbortController on
@@ -767,6 +818,136 @@ export async function startServer(
     // can act on instead of killing the turn.
     const result = await callMcpTool(body.tool, body.arguments ?? {})
     return c.json(result)
+  })
+
+  // ─── Attachments ──────────────────────────────────────────────────────
+  //
+  // Multipart upload: the pane POSTs files here when the user drops them on
+  // the chat. The host stores the file, extracts text (or marks it as an
+  // image for vision forwarding), and returns a ref the pane holds in its
+  // context store. The pane never sends file bytes again — only the ref.
+
+  app.post('/api/attachments', async (c) => {
+    // Two-layer size defence: a Content-Length pre-check rejects oversized
+    // requests before any multipart parsing work, and a per-file check after
+    // parsing rejects any single file above 50 MB. The Content-Length header
+    // is the client's own declaration and a lying client could understate it,
+    // but the pre-check still catches the honest-oversized case without
+    // consuming the body. Hono's parseBody streams to disk for large bodies on
+    // @hono/node-server, so even without a maxFileSize option (Hono's
+    // parseBody does not expose one — only `all` and `dot` in v4.x) the memory
+    // pressure is bounded, but the pre-check rejects oversized requests
+    // before any parsing work begins. The per-file check in the loop is the
+    // authoritative limit regardless of the header.
+    const MAX_FILE_BYTES = 50 * 1024 * 1024
+    const MAX_TOTAL_BYTES = 200 * 1024 * 1024
+    const contentLength = parseInt(c.req.header('content-length') ?? '0', 10)
+    if (contentLength > MAX_TOTAL_BYTES) {
+      return c.json(
+        { code: 'request_too_large', message: 'total upload exceeds 200 MB' },
+        413,
+      )
+    }
+
+    // parseBody({ all: true }) so duplicate 'files' fields are returned as an
+    // array instead of Hono collapsing them to only the last value. Without this,
+    // a multi-file upload silently drops every file except the last.
+    const body = await c.req.parseBody({ all: true })
+    const raw = body.files
+    // With { all: true } Hono always returns an array per field, so `raw` is
+    // already an array in the normal case. Hono types a field as
+    // `File | File[] | string` (a non-file form field is a string), so the
+    // array branch narrows to `(File | string)[]` and is cast through
+    // `unknown` to `File[]`: the per-file loop below re-checks `file.name`
+    // before use, so a string field that slipped in is skipped at runtime
+    // rather than trusted here. The defensive single-value branch is kept
+    // for robustness: a future Hono change or a hand-rolled body could hand
+    // back a bare File, and `Object.values` on a File instance was exactly
+    // the silent-drop bug that bit single-file uploads before. A File has a
+    // `name` property, so that is the discriminator; anything else falls
+    // through to an empty array.
+    const filelist: File[] = Array.isArray(raw)
+      ? (raw as unknown as File[])
+      : raw && typeof raw === 'object' && 'name' in raw
+        ? [raw as File]
+        : []
+    if (filelist.length === 0) {
+      return c.json({ code: 'bad_request', message: 'no files' }, 400)
+    }
+    let totalBytes = 0
+    const refs: AttachmentRef[] = []
+    const errors: { fileName: string; message: string }[] = []
+    for (const f of filelist) {
+      const file = f as File
+      if (!file || typeof file.name !== 'string') continue
+      if (file.size > MAX_FILE_BYTES) {
+        // Reject the whole request on an oversized single file: a partial
+        // batch with one file over the per-file cap is not useful, and the
+        // client sends one file per request in practice anyway.
+        return c.json({ code: 'file_too_large', message: `${file.name} exceeds 50 MB` }, 413)
+      }
+      totalBytes += file.size
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        return c.json({ code: 'request_too_large', message: 'total upload exceeds 200 MB' }, 413)
+      }
+      const buffer = Buffer.from(await file.arrayBuffer())
+      const meta = saveAttachment({ name: file.name, type: file.type, buffer })
+      let tokenEstimate = 0
+      try {
+        const result = await extractText(buffer, file.name, file.type)
+        if (result.kind === 'text') {
+          tokenEstimate = Math.ceil(result.text.length / 3.5)
+          // Store the extracted text on the meta so prompt assembly can
+          // read it without re-extracting.
+          getMeta(meta.id)!.text = result.text
+        }
+      } catch (e) {
+        // Unsupported type or extraction failure: skip this file and keep
+        // going rather than orphaning the files already saved in the batch.
+        // The saved bytes are cleaned up so the host does not leak disk, and
+        // the failure is reported back to the client in `errors`.
+        deleteAttachment(meta.id)
+        errors.push({ fileName: file.name, message: (e as Error).message })
+        continue
+      }
+      refs.push({
+        id: meta.id,
+        fileName: meta.fileName,
+        kind: meta.kind,
+        mimeType: meta.mimeType,
+        tokenEstimate,
+      })
+    }
+    return c.json({ attachments: refs, errors })
+  })
+
+  app.get('/api/attachments/:id', async (c) => {
+    const id = c.req.param('id')
+    const meta = getMeta(id)
+    if (!meta) return c.json({ code: 'not_found', message: 'attachment not found' }, 404)
+    const bytes = getBytes(id)
+    if (!bytes) return c.json({ code: 'not_found', message: 'attachment file missing' }, 404)
+    return new Response(bytes.buffer, {
+      status: 200,
+      headers: {
+        'content-type': meta.mimeType || 'application/octet-stream',
+        'cache-control': 'no-store',
+        // Force a download rather than inline rendering: an attachment named
+        // report.html, drawing.svg, or payload.js could otherwise be executed
+        // or rendered by the browser as same-origin content. The disposition
+        // attachment header makes the browser treat the bytes as a file to
+        // save, and nosniff stops content-type guessing from overriding the
+        // declared type. Together they close the inline-execution surface.
+        'content-disposition': `attachment; filename="${encodeURIComponent(meta.fileName)}"`,
+        'x-content-type-options': 'nosniff',
+      },
+    })
+  })
+
+  app.delete('/api/attachments/:id', (c) => {
+    const id = c.req.param('id')
+    const ok = deleteAttachment(id)
+    return c.json({ ok })
   })
 
   // ─── Extension pairing ─────────────────────────────────────────────────

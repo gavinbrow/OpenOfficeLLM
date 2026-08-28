@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatRequest,
+  ContentBlock,
   ModelInfo,
   ProviderCapabilities,
   StreamEvent,
@@ -189,10 +190,33 @@ export class OpencodeAdapter implements ProviderAdapter {
 function buildOpencodePrompt(req: ChatRequest): string {
   const lines = req.messages.map((m) => {
     const tag = m.role.toUpperCase()
-    return `[${tag}]\n${m.content}`
+    return `[${tag}]\n${flattenOpencodeContent(m.content)}`
   })
   if (req.systemPrompt) lines.unshift(`[SYSTEM]\n${req.systemPrompt}`)
   return lines.join('\n\n')
+}
+
+/** Flatten a message's content into a single string for the opencode prompt.
+ *
+ *  opencode's wire format is a single flat-text prompt, so any image blocks
+ *  are dropped. The adapter declares `vision: false`, and the host's prompt
+ *  builder should have OCR'd attachments before they reach this adapter, so
+ *  reaching this path is defensive — log a warning when it happens. */
+function flattenOpencodeContent(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content
+  const textParts: string[] = []
+  let imageCount = 0
+  for (const b of content) {
+    if (b.type === 'text') textParts.push(b.text)
+    else imageCount += 1
+  }
+  if (imageCount > 0) {
+    logger.warn({
+      msg: 'dropping image blocks for non-vision opencode adapter',
+      imageCount,
+    })
+  }
+  return textParts.join('')
 }
 
 function mapOpencodeEvent(obj: unknown, sessionId: string): StreamEvent[] {
