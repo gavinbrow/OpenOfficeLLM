@@ -2,8 +2,36 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+// vi.mock is hoisted to the top of the file by vitest's transform. We mock
+// child_process to capture the spawn arguments in the applyUpdate test.
+// The mock passes through to the real implementation for all other tests
+// (checkForUpdate, getCachedUpdate, skipVersion) which don't call spawn.
+const __spawnCalls: { cmd: string; args: string[] }[] = []
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    spawn: ((cmd: string, args: string[]) => {
+      __spawnCalls.push({ cmd, args })
+      // Return a fake child — never actually spawn a process.
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => true,
+        pid: 0,
+        stdin: null,
+        stdout: null,
+        stderr: null,
+        stdio: [null, null, null],
+        connected: false,
+        exitCode: null,
+        killed: false,
+      }
+    }) as never,
+  }
+})
 import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate, CHECK_INTERVAL_MS } from '../update.js'
-import { resolveUpdateStatePath } from '../paths.js'
+import { resolveUpdateStatePath, ensureDirs } from '../paths.js'
 import { logger } from '../logging.js'
 import { HOST_VERSION } from '../paths.js'
 
@@ -189,5 +217,70 @@ describe('applyUpdate', () => {
 describe('CHECK_INTERVAL_MS', () => {
   it('is six hours — the cadence the periodic server timer relies on', () => {
     expect(CHECK_INTERVAL_MS).toBe(6 * 60 * 60 * 1000)
+  })
+})
+
+describe('applyUpdate spawn', () => {
+  beforeEach(() => {
+    fs.rmSync(TMP_DIR, { recursive: true, force: true })
+    fs.mkdirSync(HOME, { recursive: true })
+    process.env.HOME = HOME
+    if (process.platform === 'win32') {
+      process.env.APPDATA = path.join(TMP_DIR, 'appdata')
+      fs.mkdirSync(process.env.APPDATA, { recursive: true })
+    }
+    vi.spyOn(os, 'homedir').mockReturnValue(HOME)
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+  })
+
+  it('uses cmd /c start /b on Windows so the helper survives the host exit', async () => {
+    // The fix changed the spawn from `spawn(helper, [], { shell: true })` to
+    // `spawn('cmd.exe', ['/c', 'start', '/b', '', helperPath])` on Windows.
+    // The vi.mock at the top of this file captures all spawn calls into
+    // __spawnCalls; this test checks the call shape.
+    __spawnCalls.length = 0
+
+    // ensureDirs creates the app data dir tree so update-state.json can be
+    // written.
+    ensureDirs()
+
+    // Set up state so applyUpdate gets past the "no update staged" guard.
+    const state = {
+      lastCheckedAt: new Date().toISOString(),
+      latestVersion: '99.0.0',
+      downloadUrl: 'https://example.com/update.zip',
+      publishedAt: null,
+      releaseNotes: null,
+      skippedVersion: null,
+    }
+    fs.writeFileSync(resolveUpdateStatePath(), JSON.stringify(state))
+
+    // Mock fetch to return a tiny zip. body must be non-null or applyUpdate
+    // bails before reaching spawn.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: new ReadableStream({ start(ctl) { ctl.close() } }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as Response)
+
+    await applyUpdate()
+
+    expect(__spawnCalls.length).toBeGreaterThanOrEqual(1)
+    const call = __spawnCalls[0]
+    if (process.platform === 'win32') {
+      expect(call.cmd).toBe('cmd.exe')
+      expect(call.args).toContain('/c')
+      expect(call.args).toContain('start')
+      expect(call.args).toContain('/b')
+    } else {
+      expect(call.cmd).toBe('nohup')
+      expect(call.args).toContain('sh')
+      expect(call.args).toContain('-c')
+    }
+
+    vi.restoreAllMocks()
   })
 })

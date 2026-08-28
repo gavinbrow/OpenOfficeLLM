@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { spawn } from 'node:child_process'
+import * as childProcess from 'node:child_process'
 import {
   HOST_VERSION,
   UPDATE_FEED,
@@ -206,7 +206,7 @@ STAGING_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="/Applications/OpenOfficeLLM.app"
 
 # Wait for the host to exit (give it time to shut down gracefully).
-sleep 2
+sleep 3
 
 # Unzip the downloaded archive.
 cd "$STAGING_DIR"
@@ -246,16 +246,25 @@ setlocal
 set STAGING_DIR=%~dp0
 set APP_DIR=%LOCALAPPDATA%\\Programs\\OpenOfficeLLM
 
-REM Wait for the host to exit.
-timeout /t 2 /nobreak >nul
+REM Wait for the host to exit. 3s gives the host time to flush its response
+REM and shut down gracefully after the SIGTERM.
+timeout /t 3 /nobreak >nul
 
 REM Unzip (PowerShell's Expand-Archive is always available).
 powershell -NoProfile -Command "Expand-Archive -Force -Path '%STAGING_DIR%update.zip' -DestinationPath '%STAGING_DIR%extracted'"
+if errorlevel 1 (
+  echo Failed to extract update zip >> "%STAGING_DIR%update-error.log"
+  exit /b 1
+)
 
 REM Swap the binary. move /y fails if the file is locked, but the host
-REM has exited by now (sleep 2 above).
+REM has exited by now (timeout 3 above).
 if exist "%APP_DIR%\\host.exe" move /y "%APP_DIR%\\host.exe" "%APP_DIR%\\host.exe.old" >nul 2>&1
 move /y "%STAGING_DIR%extracted\\host.exe" "%APP_DIR%\\host.exe"
+if errorlevel 1 (
+  echo Failed to swap host.exe >> "%STAGING_DIR%update-error.log"
+  exit /b 1
+)
 if exist "%STAGING_DIR%extracted\\web" (
   if exist "%APP_DIR%\\web" rmdir /s /q "%APP_DIR%\\web"
   xcopy /e /i /q "%STAGING_DIR%extracted\\web" "%APP_DIR%\\web" >nul
@@ -316,12 +325,35 @@ export async function applyUpdate(): Promise<UpdateApplyResponse> {
   const { helperPath, helperArgs } = writeHelperScript(stagingDir)
 
   try {
-    const child = spawn(helperPath, helperArgs, {
-      detached: true,
-      stdio: 'ignore',
-      shell: process.platform === 'win32',
-    })
-    child.unref()
+    // The helper must survive the host's imminent SIGTERM. Node's
+    // `spawn(..., { detached: true, shell: true })` on Windows launches the
+    // helper via `cmd.exe`, but that cmd.exe is still in the host's process
+    // tree — when the host is killed, cmd.exe and its child die with it,
+    // and the update never applies.
+    //
+    // `cmd /c start /b` creates a truly independent process: `start` opens a
+    // new process group and `/b` keeps it windowless. The helper runs
+    // outside the host's lifetime, which is the whole point — it waits for
+    // the host to exit, then swaps the binary.
+    //
+    // On macOS, `nohup` + `&` in a `sh -c` achieves the same independence
+    // from the parent's process group, and `detached` + `unref` ensures
+    // Node won't wait for it.
+    if (process.platform === 'win32') {
+      const child = childProcess.spawn(
+        'cmd.exe',
+        ['/c', 'start', '/b', '', helperPath, ...helperArgs],
+        { detached: true, stdio: 'ignore', windowsVerbatimArguments: true },
+      )
+      child.unref()
+    } else {
+      const child = childProcess.spawn(
+        'nohup',
+        ['sh', '-c', `"${helperPath}" ${helperArgs.join(' ')}`],
+        { detached: true, stdio: 'ignore' },
+      )
+      child.unref()
+    }
   } catch (e) {
     logger.error({ msg: 'failed to spawn update helper', error: String(e) })
     return { ok: false, message: 'Failed to start helper' }

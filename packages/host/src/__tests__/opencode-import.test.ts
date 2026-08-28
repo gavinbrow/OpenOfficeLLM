@@ -9,7 +9,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { importFromOpencode, stripJsonComments } from '../opencode-import.js'
+import { importFromOpencode, stripJsonComments, syncKeysFromOpencode } from '../opencode-import.js'
+import { getSecret } from '../secrets.js'
+import { resolveSecretsPath } from '../paths.js'
 
 const TMP_DIR = path.join(os.tmpdir(), `ool-opencode-${process.pid}-${Date.now()}`)
 const CONFIG_DIR = path.join(TMP_DIR, 'config')
@@ -182,5 +184,71 @@ describe('stripJsonComments', () => {
       a: 1,
       b: 'https://example.com//not-a-comment',
     })
+  })
+})
+
+describe('syncKeysFromOpencode', () => {
+  beforeEach(() => {
+    // Clear the secrets store so each test starts fresh.
+    fs.rmSync(resolveSecretsPath(), { force: true })
+    // Redirect opencode data dir to the test fixture so syncKeysFromOpencode
+    // doesn't read the real auth.json on the machine running the tests.
+    for (const k of ENV_KEYS) saved[k] = process.env[k]
+    process.env.OPENCODE_DATA_DIR = DATA_DIR
+    delete process.env.XDG_DATA_HOME
+    delete process.env.APPDATA
+    delete process.env.LOCALAPPDATA
+  })
+
+  afterEach(() => {
+    fs.rmSync(resolveSecretsPath(), { force: true })
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k]
+      else process.env[k] = saved[k]
+    }
+  })
+
+  it('restores keys from auth.json for providers missing from the secrets store', () => {
+    writeAuth({
+      'ollama-cloud': { type: 'api', key: 'test-key-ollama-cloud' },
+      lmstudioserver: { type: 'api', key: 'test-key-lms' },
+    })
+
+    const restored = syncKeysFromOpencode()
+    expect(restored).toContain('ollama-cloud')
+    expect(restored).toContain('lmstudioserver')
+    expect(getSecret('ollama-cloud')).toBe('test-key-ollama-cloud')
+    expect(getSecret('lmstudioserver')).toBe('test-key-lms')
+  })
+
+  it('does not overwrite keys that already exist in the secrets store', () => {
+    // Pre-store a key manually so it's in the secrets store.
+    fs.writeFileSync(resolveSecretsPath(), JSON.stringify({ 'ollama-cloud': 'existing-blob' }))
+    writeAuth({
+      'ollama-cloud': { type: 'api', key: 'should-not-be-used' },
+    })
+
+    const restored = syncKeysFromOpencode()
+    expect(restored).not.toContain('ollama-cloud')
+  })
+
+  it('skips OAuth tokens (type !== api)', () => {
+    writeAuth({
+      anthropic: { type: 'oauth', key: 'oauth-token' },
+    })
+
+    const restored = syncKeysFromOpencode()
+    expect(restored).not.toContain('anthropic')
+  })
+
+  it('returns empty when auth.json has no entries', () => {
+    writeAuth({})
+    const restored = syncKeysFromOpencode()
+    expect(restored).toEqual([])
+  })
+
+  it('returns empty when auth.json does not exist', () => {
+    const restored = syncKeysFromOpencode()
+    expect(restored).toEqual([])
   })
 })

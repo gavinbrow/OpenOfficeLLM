@@ -27,7 +27,7 @@ import type {
   ImportedProviderConfig,
   McpServerConfig,
 } from '@openofficellm/shared'
-import { setSecret } from './secrets.js'
+import { setSecret, listConfigured } from './secrets.js'
 import { logger } from './logging.js'
 import {
   BUILTIN_PROVIDER_IDS,
@@ -549,4 +549,59 @@ export function importFromOpencode(commit = true): OpencodeImportResult {
     searched,
     errors,
   }
+}
+
+/**
+ * Re-import API keys from opencode's auth.json for any provider that is no
+ * longer in the secrets store.
+ *
+ * The full import (`importFromOpencode`) is a user-initiated action — it
+ * merges providers, MCP servers, and agents into config, which is a
+ * destructive operation. But keys disappearing after an update or a
+ * secrets.dat corruption is a common silent failure: the host starts, the
+ * provider shows "no key", and the user has to re-import or re-enter keys
+ * by hand. This function does the one safe thing that fixes that: read
+ * auth.json, and for any provider that has a key there but not in the
+ * secrets store, store it. No config changes, no provider registration —
+ * just keys.
+ *
+ * Returns the list of provider ids whose keys were restored, for logging.
+ */
+export function syncKeysFromOpencode(): string[] {
+  const existing = new Set(listConfigured())
+  const restored: string[] = []
+
+  // Read auth.json directly — we don't need the full config, just the keys.
+  let auth: OpencodeAuth = {}
+  for (const dir of dataDirCandidates()) {
+    const p = path.join(dir, 'auth.json')
+    if (!fs.existsSync(p)) continue
+    try {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8')) as OpencodeAuth
+      auth = { ...auth, ...parsed }
+    } catch {
+      // ignore — a corrupt auth.json is not something we can fix
+    }
+  }
+
+  for (const [rawId, entry] of Object.entries(auth)) {
+    if (!entry || entry.type !== undefined && entry.type !== 'api') continue
+    if (!entry.key) continue
+    const id = canonicalProviderId(toId(rawId))
+    if (!id) continue
+    if (existing.has(id)) continue
+
+    try {
+      setSecret(id, entry.key)
+      restored.push(id)
+    } catch (e) {
+      logger.warn({ msg: 'failed to restore provider key from opencode', id, error: String(e) })
+    }
+  }
+
+  if (restored.length > 0) {
+    logger.info({ msg: 'restored provider keys from opencode auth.json', providers: restored })
+  }
+
+  return restored
 }

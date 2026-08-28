@@ -50,7 +50,7 @@ import {
   enabledToolDefinitions,
   callTool as callMcpTool,
 } from './mcp/registry.js'
-import { importFromOpencode } from './opencode-import.js'
+import { importFromOpencode, syncKeysFromOpencode } from './opencode-import.js'
 import {
   saveAttachment,
   getMeta,
@@ -255,6 +255,12 @@ export async function startServer(
     setConfigPort(portSelection.port)
   }
   const port = portSelection.port
+
+  // Re-import any API keys that vanished from the secrets store — a common
+  // silent failure after an update or a corrupted secrets.dat. This reads
+  // opencode's auth.json and restores only keys that are missing, without
+  // touching config or provider registration.
+  syncKeysFromOpencode()
 
   const auth = createAuthToken()
   const addinDist = findAddinDist()
@@ -1024,7 +1030,12 @@ export async function startServer(
   app.post('/api/update/apply', async (c) => {
     const result = await applyUpdate()
     if (result.ok) {
-      setImmediate(() => process.kill(process.pid, 'SIGTERM'))
+      // Give the response time to flush to the client before the SIGTERM
+      // kills the process. The helper script waits 2s for the host to exit,
+      // but the host needs to actually die within that window — a 1s delay
+      // here ensures the response is sent and the helper has a clean exit
+      // to work with.
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 1000)
     }
     return c.json(result)
   })
