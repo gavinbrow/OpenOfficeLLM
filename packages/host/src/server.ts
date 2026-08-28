@@ -6,7 +6,7 @@ import { streamSSE } from 'hono/streaming'
 import type { Context } from 'hono'
 import { serve } from '@hono/node-server'
 import { DEFAULT_PORT, HOST_INTERFACE, HOST_VERSION, ensureDirs, ATTACHMENTS_DIR } from './paths.js'
-import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate } from './update.js'
+import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate, CHECK_INTERVAL_MS } from './update.js'
 import { z } from 'zod'
 import {
   loadConfig,
@@ -1064,6 +1064,16 @@ export async function startServer(
 
   checkForUpdate().catch(() => {})
 
+  // Re-check for updates periodically so a long-running host surfaces a new
+  // release without needing a restart. The initial check above runs once at
+  // startup; this interval keeps it fresh for hosts that stay up for days.
+  // checkForUpdate() is internally bounded by CHECK_INTERVAL_MS via its own
+  // cache, so each tick is cheap (a cache read) unless the cache has expired.
+  const updateTimer = setInterval(() => {
+    void checkForUpdate().catch(() => {})
+  }, CHECK_INTERVAL_MS)
+  updateTimer.unref()
+
   logger.info({ msg: `listening on https://${HOST_INTERFACE}:${port}` })
 
   // Rewrite the manifest from the port we actually bound. If the preferred
@@ -1092,6 +1102,7 @@ export async function startServer(
   }
 
   const close = async (): Promise<void> => {
+    clearInterval(updateTimer)
     stopDiscoveryLoop()
     // Before closing the socket: stdio MCP servers are child processes, and
     // leaving them behind orphans one per host restart.

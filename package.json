@@ -1,7 +1,7 @@
 {
   "name": "openofficellm",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "description": "Claude-style AI assistant for Microsoft Word and Excel on Windows desktop and for Chrome, with first-class local model support.",
   "workspaces": [

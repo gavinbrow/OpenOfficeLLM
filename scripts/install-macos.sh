@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/install-macos.sh              # latest release
-#   ./scripts/install-macos.sh v0.1.4       # a specific tag
+#   ./scripts/install-macos.sh v0.1.5       # a specific tag
 #
 # Why this exists, and why it is not just a convenience wrapper around the DMG:
 #

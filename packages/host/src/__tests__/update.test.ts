@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate } from '../update.js'
+import { checkForUpdate, getCachedUpdate, skipVersion, applyUpdate, CHECK_INTERVAL_MS } from '../update.js'
 import { resolveUpdateStatePath } from '../paths.js'
 import { logger } from '../logging.js'
 import { HOST_VERSION } from '../paths.js'
@@ -183,5 +183,11 @@ describe('applyUpdate', () => {
     const res = await applyUpdate()
     expect(res.ok).toBe(false)
     expect(res.message).toBe('No update staged')
+  })
+})
+
+describe('CHECK_INTERVAL_MS', () => {
+  it('is six hours — the cadence the periodic server timer relies on', () => {
+    expect(CHECK_INTERVAL_MS).toBe(6 * 60 * 60 * 1000)
   })
 })

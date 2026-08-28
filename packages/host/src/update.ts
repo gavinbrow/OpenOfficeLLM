@@ -21,7 +21,7 @@ interface UpdateState {
   skippedVersion: string | null
 }
 
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const RELEASE_NOTES_MAX = 500
 
 function defaultState(): UpdateState {
